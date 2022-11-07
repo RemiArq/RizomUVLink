@@ -1,0 +1,103 @@
+# add RizomUVLink module path to the python module search path
+import sys
+from os.path import dirname
+sys.path.append(dirname(__file__) + "/../")
+
+# import all RizomUVLink module items.
+# the correct .pyc binary library for the current Python version should magically be loaded.
+# Current supported Python versions are 3.6 to 3.10.
+# Please tell us if other Python version are needed
+from RizomUVLink import *
+
+# create a rizomuvlink object instance
+link = CRizomUVLink()
+
+# run the last rizomuv standalone and connect the link to it.
+#
+# on Windows the rizomuv.exe path is found using the Windows's registry.
+# the returned port is a free TCP port used to communicate with the two entities.
+#
+# Installed RizomUV Standalone must be version >= 2022.2
+port = link.RunRizomUV()
+print("RizomUV " + link.RizomUVVersion() + " is now listening commands on TCP port: " + str(port))
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+#                                                                             
+# "link" is now associated to the current RizomUV standalone instance and     
+# ready to send commands to it                                                
+#                                                                             
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+#                                                                             
+# The link object instance is meant to be persistant along with the           
+# standalone instance. This permits to load new meshes and send new commands  
+# without the need to run RizomUV again and wait for its initialisation.      
+# So if you can, keep the link instance somewhere and use it as long as       
+# possible along with the RizomUV standalone instance.                        
+#                                                                             
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+#                                                                             
+# In very special cases, several RizomUV instance can be ran simultaneously.  
+# To do that simply create a new link instance and run a new RizomUV instance.
+# The following link1 and link2 object can perfectly live simultaneously and  
+# independently
+#                                                                             
+# link1 = CRizomUVLink()                                                      
+# link2 = CRizomUVLink()                                                      
+#                                                                             
+# link1.RunRizomUV()                                                          
+# link2.RunRizomUV()                                                          
+#                                                                             
+# link1.Load(...)                                                             
+# link2.Load(...)                                                             
+# link1.Unfold()                                                              
+# link2.Unfold()                                                              
+#                                                                             
+#       .                                                                     
+#       .                                                                     
+#       .                                                                     
+#                                                                             
+#  link1.Quit()                                                               
+#                                                                             
+#  link2.Pack()                                                               
+#  link2.Quit()                                                               
+#                                                                             
+# WARNING: While the previous lines are perfectly legal, each RizomUV instance
+# take 1 token on floating license configuration. This is not a problem       
+# in case of nodelocked licenses however, but in case of floating license     
+# you could running out of license token.                                     
+#                                                                             
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
+
+try:
+    # mesh path inpt & output from the example directory
+    meshInputPath = dirname(__file__) + "/ExampleMesh.obj"
+    meshOutputPath = dirname(__file__) + "/ExampleMeshOutput.obj"
+
+    params = {  
+        "File.Path": meshInputPath,
+        "File.XYZUVW": True,                    # 3D + UV data loaded (use File.XYZ instead to load 3D data only)
+        "File.UVWProps": True,                  # UVs properties such as pinning, texel density settings etc... will be loaded
+        "File.ImportGroups": True,              # Island group hierarchy will be loaded
+        "__Focus": True,                        # Focus viewports on the loaded mesh
+    }
+    link.Load(params)
+
+    # Unfold full mesh with default parameters
+    link.Unfold({})                             
+    
+    # Pack full mesh with default parameters
+    link.Pack({})                             
+    
+    # Save the mesh with default parameters
+    link.Save({"File.Path" : meshOutputPath})   
+
+    # Close RizomUV standalone instance associated to link
+    link.Quit({})
+
+    # link.Load(...) # obviously won't work here as the rizomUV instance 
+    # is closed so a new call to link.RunRizomUV() would be necessary 
+    
+except CZEx as ex:
+    print(str(ex))
+
+print("Done")
