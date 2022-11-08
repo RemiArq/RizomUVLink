@@ -50,7 +50,7 @@ class CRizomUVLink(CRizomUVLinkBase):
         if connect:
             self.Connect(self.port)
         
-        # wait for RizomUV initialisation to complete
+        ## wait for RizomUV initialisation to complete
         if wait:
             # calling the method will force to wait for the RizomUV to be ready
             version = self.RizomUVVersion()

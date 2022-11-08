@@ -1,5 +1,6 @@
 # add RizomUVLink module path to the python module search path
 import sys
+import os
 from os.path import dirname
 sys.path.append(dirname(__file__) + "/../")
 
@@ -19,7 +20,10 @@ link = CRizomUVLink()
 #
 # Installed RizomUV Standalone must be version >= 2022.2
 port = link.RunRizomUV()
-print("RizomUV " + link.RizomUVVersion() + " is now listening commands on TCP port: " + str(port))
+#print("RizomUV " + link.RizomUVVersion() + " is now listening commands on TCP port: " + str(port))
+print("RizomUV is now listening commands on TCP port: " + str(port))
+
+#input("Press Enter to continue...")
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
 #                                                                             
