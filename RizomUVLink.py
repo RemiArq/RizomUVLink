@@ -90,29 +90,25 @@ class CRizomUVLink(CRizomUVLinkBase):
         else:
             raise CZEx("Unsupported platform: " + platform.system())
     
-    def RizomUVWinPath_(self):
-        return "C:\\Users\\arqui\\Documents\\rizom-uv\\RizomUVApp\\bin\\rizomuv.exe"
-
     def RizomUVWinPath(self):
         """ Returns the path to the most recent version 
             of RizomUV.exe installed on the system using
             the windows registry.
+            
+            Try versions from 2029.10 to 2022.2 included
         """
         import winreg
 
-        keyPaths = []
         for i in range(9, 1, -1):
             for j in range(10, -1, -1):
                 if i == 2 and j < 2:
                     continue
-                keyPaths.append("SOFTWARE\\Rizom-Lab\\RizomUV VS RS 202" + str(i) + "." + str(j))
+                path = "SOFTWARE\\Rizom Lab\\RizomUV VS RS 202" + str(i) + "." + str(j)
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+                    return winreg.QueryValue(key, "rizomuv.exe")
+                except:
+                    pass
 
-        for path in keyPaths:
-            try:
-                print(path)
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
-                return winreg.QueryValue(key, "rizomuv.exe")
-            except:
-                pass
         return None
     
