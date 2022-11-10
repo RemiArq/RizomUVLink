@@ -34,6 +34,7 @@ from RizomUVLink import *
 
 # create a rizomuvlink object instance
 link = CRizomUVLink()
+print("RizomUVLink " + link.Version() + " instance has been created")
 
 # run the last rizomuv standalone and connect the link to it.
 #
@@ -42,10 +43,7 @@ link = CRizomUVLink()
 #
 # Installed RizomUV Standalone must be version >= 2022.2
 port = link.RunRizomUV()
-#print("RizomUV " + link.RizomUVVersion() + " is now listening commands on TCP port: " + str(port))
-print("RizomUV is now listening commands on TCP port: " + str(port))
-
-#input("Press Enter to continue...")
+print("RizomUV " + link.RizomUVVersion() + " is now listening commands on TCP port: " + str(port))
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #  
 #                                                                             
