@@ -25,7 +25,32 @@ The main principle is that commands and data can be emitted using the RizomUVLin
 
 ### Installing
 
-All files constitute the module for all platforms and versions of Python. The installation is the full repository folder's content by itself.
+The RizomUVLink folder is located in the RizomUV's installation directory. Installing RizomUV itself using its setup is enough.
+On Windows platform the location of the last RizomUV installation directory can be retreived from this Python code:
+
+    def RizomUVWinRegisterInstallPath():
+        """ Returns the path to the most recent version 
+            of the RizomUV installation directory on the system using
+            the windows registry.
+            
+            Try versions from 2029.10 to 2022.2 included
+        """
+        import winreg
+        from pathlib import Path
+
+        for i in range(9, 1, -1):
+            for j in range(10, -1, -1):
+                if i == 2 and j < 2:
+                    continue
+                path = "SOFTWARE\\Rizom Lab\\RizomUV VS RS 202" + str(i) + "." + str(j)
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+                    exePath = winreg.QueryValue(key, "rizomuv.exe")
+                    return path.dirname(exePath)
+                except:
+                    pass
+
+        return None
 
 ## Help
 
@@ -33,7 +58,11 @@ Please have a look at the **examples** folder, especially at the **Simple.py** f
 
 ## Authors
 
-Remi Arquier from Rizom-Lab
+Remi Arquier from Rizom-Lab. 
+
+remi.arquier at rizom-lab.com
+
+https://www.rizom-lab.com
 
 ## License
 

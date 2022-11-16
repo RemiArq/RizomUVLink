@@ -22,6 +22,9 @@
 
 import os
 
+# python 3.4+
+from pathlib import Path
+
 from RizomUVLinkBase import CRizomUVLinkBase
 from RizomUVLinkBase import CZEx
 
@@ -74,7 +77,7 @@ class CRizomUVLink(CRizomUVLinkBase):
         
         ## wait for RizomUV initialisation to complete
         if wait:
-            # calling the method will force to wait for the RizomUV to be ready
+            # calling this will force to wait for RizomUV to be ready
             version = self.RizomUVVersion()
 
         return self.port
@@ -91,8 +94,11 @@ class CRizomUVLink(CRizomUVLinkBase):
             raise CZEx("Unsupported platform: " + platform.system())
     
     def RizomUVWinPath(self):
+        return str(Path(__file__).resolve().parent.parent) + "/rizomuv.exe"
+        
+    def RizomUVWinRegisterInstallPath(self):
         """ Returns the path to the most recent version 
-            of RizomUV.exe installed on the system using
+            of the RizomUV installation directory on the system using
             the windows registry.
             
             Try versions from 2029.10 to 2022.2 included
@@ -106,7 +112,8 @@ class CRizomUVLink(CRizomUVLinkBase):
                 path = "SOFTWARE\\Rizom Lab\\RizomUV VS RS 202" + str(i) + "." + str(j)
                 try:
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
-                    return winreg.QueryValue(key, "rizomuv.exe")
+                    exePath = winreg.QueryValue(key, "rizomuv.exe")
+                    return path.dirname(exePath)
                 except:
                     pass
 

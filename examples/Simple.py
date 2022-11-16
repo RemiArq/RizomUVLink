@@ -22,12 +22,12 @@
 
 # add RizomUVLink module path to the python module search path
 import sys
-import os
+import tempfile
 from os.path import dirname
 sys.path.append(dirname(__file__) + "/../")
 
 # import all RizomUVLink module items.
-# the correct .pyc binary library for the current Python version should magically be loaded.
+# the correct .pyc binary library for the current Python version should be loaded.
 # Current supported Python versions are 3.6 to 3.10.
 # Please tell us if other Python version are needed
 from RizomUVLink import *
@@ -36,11 +36,8 @@ from RizomUVLink import *
 link = CRizomUVLink()
 print("RizomUVLink " + link.Version() + " instance has been created")
 
-# run the last rizomuv standalone and connect the link to it.
-#
-# on Windows the rizomuv.exe path is found using the Windows's registry.
-# the returned port is a free TCP port used to communicate with the two entities.
-#
+# Run rizomuv standalone and connect the link to it.
+# The returned port is a free TCP port used to communicate with the two entities.
 # Installed RizomUV Standalone must be version >= 2022.2
 port = link.RunRizomUV()
 print("RizomUV " + link.RizomUVVersion() + " is now listening commands on TCP port: " + str(port))
@@ -95,7 +92,7 @@ print("RizomUV " + link.RizomUVVersion() + " is now listening commands on TCP po
 try:
     # mesh path inpt & output from the example directory
     meshInputPath = dirname(__file__) + "/ExampleMesh.obj"
-    meshOutputPath = dirname(__file__) + "/ExampleMeshOutput.obj"
+    meshOutputPath = tempfile.gettempdir() + "/ExampleMeshOutput.obj"
 
     params = {  
         "File.Path": meshInputPath,
@@ -107,7 +104,7 @@ try:
     link.Load(params)
 
     # Unfold full mesh with default parameters
-    link.Unfold({})                             
+    link.Unfold({})
     
     # Pack full mesh with default parameters
     link.Pack({})                             
