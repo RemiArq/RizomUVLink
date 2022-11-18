@@ -113,8 +113,8 @@ class CRizomUVLink(CRizomUVLinkBase):
                 try:
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
                     exePath = winreg.QueryValue(key, "rizomuv.exe")
-                    return path.dirname(exePath)
-                except:
+                    return os.path.dirname(exePath)
+                except FileNotFoundError:
                     pass
 
         return None
