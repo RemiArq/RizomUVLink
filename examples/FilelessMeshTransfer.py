@@ -21,9 +21,42 @@
 # SOFTWARE.
 
 import sys
-from os.path import dirname
-sys.path.append(dirname(__file__) + "/../")
+import os
+import tempfile
 
+from os.path import dirname
+
+def RizomUVWinRegisterInstallPath():
+    """ Returns the path to the most recent version 
+        of the RizomUV installation directory on the system using
+        the Windows registry.
+            
+        Look for versions from 2029.10 to 2022.2 included
+    """
+    import winreg
+    from pathlib import Path
+
+    for i in range(9, 1, -1):
+        for j in range(10, -1, -1):
+            if i == 2 and j < 2:
+                continue
+            path = "SOFTWARE\\Rizom Lab\\RizomUV VS RS 202" + str(i) + "." + str(j)
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+                exePath = winreg.QueryValue(key, "rizomuv.exe")
+                return os.path.dirname(exePath)
+            except FileNotFoundError:
+                pass
+
+    return None
+
+# add the RizomUVLink installation path to the Python module search paths
+sys.path.append(RizomUVWinRegisterInstallPath() + "/RizomUVLink")
+
+# import all RizomUVLink module items.
+# the correct .pyc binary library for the current Python version should be loaded.
+# Current supported Python versions are 3.6 to 3.10.
+# Please tell us if other Python version are needed
 from RizomUVLink import *
 
 link = CRizomUVLink()

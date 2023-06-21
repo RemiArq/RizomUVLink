@@ -26,6 +26,7 @@ The main principle is that commands and data can be emitted using the RizomUVLin
 ### Installing
 
 The RizomUVLink folder is located in the RizomUV's installation directory. Installing RizomUV itself using its setup is enough.
+
 On Windows platform the location of the last RizomUV installation directory can be retreived from this Python code:
 
     def RizomUVWinRegisterInstallPath():
