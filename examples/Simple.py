@@ -1,6 +1,6 @@
 # MIT License
 # 
-# Copyright (c) [2022] [Rizom-Lab]
+# Copyright (c) [2023] [Rizom-Lab]
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -55,7 +55,7 @@ sys.path.append(RizomUVWinRegisterInstallPath() + "/RizomUVLink")
 
 # import all RizomUVLink module items.
 # the correct .pyc binary library for the current Python version should be loaded.
-# Current supported Python versions are 3.6 to 3.10.
+# Current supported Python versions are 3.6 to 3.12.
 # Please tell us if other Python version are needed
 from RizomUVLink import *
 
@@ -133,8 +133,8 @@ try:
     # Unfold full mesh with default parameters
     link.Unfold({})
     
-    # Pack full mesh with default parameters
-    link.Pack({})                             
+    # Pack full mesh
+    link.Pack({"Translate": True})                             
     
     # Save the mesh with default parameters
     link.Save({"File.Path" : meshOutputPath})   
