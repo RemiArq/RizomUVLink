@@ -21,7 +21,7 @@ The main principle is that commands and data can be emitted using the RizomUVLin
 ### Dependencies
 
 * RizomUV Standalone version 2022.2 or superior, available at https://rizom-lab.com
-* Python 3.6.X | 3.7.X | 3.8.X | 3.9.X | 3.10.X (tell us if you need other versions of Python)
+* Python 3.6.X | 3.7.X | 3.8.X | 3.9.X | 3.10.X | 3.11.X | 3.12.X (tell us if you need other versions of Python)
 
 ### Installing
 
