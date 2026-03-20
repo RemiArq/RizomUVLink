@@ -55,7 +55,7 @@ sys.path.append(RizomUVWinRegisterInstallPath() + "/RizomUVLink")
 
 # import all RizomUVLink module items.
 # the correct .pyc binary library for the current Python version should be loaded.
-# Current supported Python versions are 3.6 to 3.10.
+# Current supported Python versions are 3.6 to 3.13.
 # Please tell us if other Python version are needed
 from RizomUVLink import *
 

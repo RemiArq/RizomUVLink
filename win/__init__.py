@@ -42,5 +42,8 @@ except:
 						try:
 							import win.rizomuvlink_python312 as rizomuvlink
 						except:
-							raise "rizomuvlink version for the current python version not found. Please tell to the Rizom-Lab team which version would you need. We may add it to the list."
+							try:
+								import win.rizomuvlink_python313 as rizomuvlink
+							except:
+								raise "rizomuvlink version for the current python version not found. Please tell to the Rizom-Lab team which version would you need. We may add it to the list."
 
