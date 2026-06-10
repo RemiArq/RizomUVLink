@@ -1,6 +1,6 @@
 # MIT License
 # 
-# Copyright (c) 2023 Rizom-Lab
+# Copyright (c) 2026 Rizom-Lab
 # 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,7 @@ class CRizomUVLink(CRizomUVLinkBase):
     def RunRizomUV(self, exePath : str = None, port : int = None, connect : bool = True, wait : bool = True) -> int:
         """ Runs RizomUV, connect to the instance and wait for it to be ready
         
-            RizomUV standalone version must be 2022.2 or later. 
+            RizomUV standalone version must be 2025.0 or later. 
             
             If RizomUV is already running, another instance will be ran
             and the existing one will be left untouched and will be disconnected
@@ -101,11 +101,11 @@ class CRizomUVLink(CRizomUVLinkBase):
             of the RizomUV installation directory on the system using
             the windows registry.
             
-            Try versions from 2029.10 to 2022.2 included
+            Try versions from 2029.10 to 2025.0 included
         """
         import winreg
 
-        for i in range(9, 1, -1):
+        for i in range(9, 5, -1):
             for j in range(10, -1, -1):
                 if i == 2 and j < 2:
                     continue
