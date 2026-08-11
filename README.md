@@ -20,7 +20,7 @@ The main principle is that commands and data can be emitted using the RizomUVLin
 
 ### Dependencies
 
-* RizomUV Standalone version 2026.0 or superior, available at https://rizom-lab.com
+* RizomUV Standalone version 2026.0 or superior, available at https://rizomuv.com
 * Python 3.6.X | 3.7.X | 3.8.X | 3.9.X | 3.10.X | 3.11.X | 3.12.X | 3.13.X (tell us if you need other versions of Python)
 
 ### Installing
@@ -61,9 +61,9 @@ Please have a look at the **examples** folder, especially at the **Simple.py** f
 
 Remi Arquier from Rizom-Lab. 
 
-remi.arquier at rizom-lab.com
+remi.arquier at rizomuv.com
 
-https://www.rizom-lab.com
+https://www.rizomuv.com
 
 ## License
 
