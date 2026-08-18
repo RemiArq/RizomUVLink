@@ -21,6 +21,7 @@
 # SOFTWARE.
 
 import os
+import tempfile
 import time
 
 # python 3.4+
@@ -28,6 +29,62 @@ from pathlib import Path
 
 from RizomUVLinkBase import CRizomUVLinkBase
 from RizomUVLinkBase import CZEx
+
+
+class CLaunchLock:
+    """Exclusive right to start a RizomUV on one TCP port.
+
+    The link protocol is single client per port: while a command runs the standalone
+    answers heart beats and swallows the client's reply with a raw receive, which only
+    pairs up when exactly one client is on the socket. Two scripts racing to launch on
+    the same port therefore do not merely waste an instance -- they cross the pairing,
+    and a client that keeps receiving beats meant for another never times out and hangs.
+
+    So a launch is serialised on a lock file named after the port. The lock is held by
+    the OS, not by its content, and is released when the holder dies: a crashed launcher
+    leaves nothing to clean up.
+    """
+
+    def __init__(self, port : int):
+        self.path = os.path.join(tempfile.gettempdir(), "rizomuvlink_launch_%d.lock" % port)
+        self.handle = None
+
+    def Acquire(self) -> bool:
+        """ True when this process may launch. False means someone else is launching
+            on that port right now, and the only sane thing to do is wait for it. """
+        try:
+            self.handle = open(self.path, "a+b")
+        except OSError:
+            return False  # no lock possible here: behave as before rather than refuse to work
+        try:
+            self.handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            self.handle.close()
+            self.handle = None
+            return False
+
+    def Release(self):
+        if self.handle is None:
+            return
+        try:
+            self.handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        self.handle.close()
+        self.handle = None
 
 class CRizomUVLink(CRizomUVLinkBase):
     def __init__(self):
@@ -73,15 +130,33 @@ class CRizomUVLink(CRizomUVLinkBase):
                 raise CZEx("Port " + str(port) + " is already in use, please connect using another port")
             self.port = port
         
-        # run RizomUV asynchronously. The executable directory is handed to the child
-        # as its working directory rather than chdir()ed into: this runs inside a host
-        # application whose current directory is not ours to change.
-        import subprocess
-        subprocess.Popen([exePath, "-id", str(self.port)], cwd=os.path.dirname(exePath))
+        # Only one process may start an instance on a given port. Without this, two
+        # scripts run in quick succession both see a port nobody has opened YET and both
+        # launch: the loser's instance never gets the port, and the two clients end up
+        # sharing one socket, which the heart beat protocol cannot pair up (see
+        # CLaunchLock). Whoever does not get the lock waits for the port instead, which
+        # is what it wanted in the first place.
+        launcher = CLaunchLock(self.port)
+        weLaunch = launcher.Acquire()
+        try:
+            if weLaunch:
+                # run RizomUV asynchronously. The executable directory is handed to the
+                # child as its working directory rather than chdir()ed into: this runs
+                # inside a host application whose current directory is not ours to change.
+                import subprocess
+                subprocess.Popen([exePath, "-id", str(self.port)], cwd=os.path.dirname(exePath))
 
-        # wait for the instance to open its port BEFORE anything is sent to it
-        if wait:
-            self.WaitForPort(self.port, timeOut)
+            # wait for the instance to open its port BEFORE anything is sent to it. The
+            # lock is held throughout, so nobody else launches while this one is coming up.
+            if wait:
+                self.WaitForPort(self.port, timeOut)
+            elif not weLaunch:
+                # nothing was started here and the caller does not want to wait: say so
+                # rather than let it believe an instance is on its way
+                raise CZEx("Another process is already starting RizomUV on port "
+                           + str(self.port) + ". Call with wait=True to wait for it.")
+        finally:
+            launcher.Release()
 
         # connect the the instance
         if connect:
