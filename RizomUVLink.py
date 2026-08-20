@@ -91,7 +91,7 @@ class CRizomUVLink(CRizomUVLinkBase):
         super().__init__()
         self.port = None
 
-    def RunRizomUV(self, exePath : str = None, port : int = None, connect : bool = True, wait : bool = True, timeOut : float = 120.0) -> int:
+    def RunRizomUV(self, exePath : str = None, port : int = None, connect : bool = True, wait : bool = True, timeOut : float = 120.0, background : bool = False) -> int:
         """ Runs RizomUV, connect to the instance and wait for it to be ready
 
             RizomUV standalone version must be 2025.0 or later.
@@ -107,6 +107,16 @@ class CRizomUVLink(CRizomUVLinkBase):
             Nothing is ever sent before the instance listens: a command sent to a port
             nobody has opened yet stays queued in the socket, and that queue used to
             freeze the host application the moment this object was collected.
+
+            background=True opens RizomUV behind this application instead of in front of
+            it, so the window being worked in keeps the focus and its script stays
+            typeable while RizomUV starts. Windows lets a freshly started process take
+            the foreground from whoever started it, which is why the default is to come
+            to the front.
+
+            Needs RizomUV 2026.0.297 or later: an older build does not know the flag, and
+            answers a command line it cannot parse with a usage message box that nobody
+            is there to dismiss, so it would never reach its port.
 
             returns:
                 The TCP port number used by the RizomUV instance to communicate.
@@ -144,7 +154,10 @@ class CRizomUVLink(CRizomUVLinkBase):
                 # child as its working directory rather than chdir()ed into: this runs
                 # inside a host application whose current directory is not ours to change.
                 import subprocess
-                subprocess.Popen([exePath, "-id", str(self.port)], cwd=os.path.dirname(exePath))
+                args = [exePath, "-id", str(self.port)]
+                if background:
+                    args.append("-bg")
+                subprocess.Popen(args, cwd=os.path.dirname(exePath))
 
             # wait for the instance to open its port BEFORE anything is sent to it. The
             # lock is held throughout, so nobody else launches while this one is coming up.
