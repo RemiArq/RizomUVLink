@@ -148,6 +148,7 @@ class CRizomUVLink(CRizomUVLinkBase):
         # is what it wanted in the first place.
         launcher = CLaunchLock(self.port)
         weLaunch = launcher.Acquire()
+        instance = None
         try:
             if weLaunch:
                 # run RizomUV asynchronously. The executable directory is handed to the
@@ -157,12 +158,12 @@ class CRizomUVLink(CRizomUVLinkBase):
                 args = [exePath, "-id", str(self.port)]
                 if background:
                     args.append("-bg")
-                subprocess.Popen(args, cwd=os.path.dirname(exePath))
+                instance = subprocess.Popen(args, cwd=os.path.dirname(exePath))
 
             # wait for the instance to open its port BEFORE anything is sent to it. The
             # lock is held throughout, so nobody else launches while this one is coming up.
             if wait:
-                self.WaitForPort(self.port, timeOut)
+                self.WaitForPort(self.port, timeOut, process = instance)
             elif not weLaunch:
                 # nothing was started here and the caller does not want to wait: say so
                 # rather than let it believe an instance is on its way
@@ -183,16 +184,26 @@ class CRizomUVLink(CRizomUVLinkBase):
 
         return self.port
 
-    def WaitForPort(self, port : int, timeOut : float = 120.0, period : float = 0.25):
+    def WaitForPort(self, port : int, timeOut : float = 120.0, period : float = 0.25, process = None):
         """ Block until a RizomUV instance listens on the given TCP port.
 
             Raises CZEx when timeOut seconds have passed. Polling the port leaves
             nothing behind if the instance never comes up, where sending a command to
             an instance that is not listening yet leaves an undeliverable request in
             the socket.
+
+            process, when given, is the instance being waited for. It is watched
+            alongside the port, so that one which refuses to start -- a command line it
+            could not parse, an unavailable license -- is reported the moment it exits,
+            naming its exit code, instead of being waited on for the whole timeOut.
         """
         deadline = time.time() + timeOut
         while not self.TCPPortIsOpen(port):
+            if process is not None and process.poll() is not None:
+                raise CZEx("RizomUV exited with code " + str(process.returncode)
+                           + " without opening the TCP port " + str(port)
+                           + ". It refused to start: most often a command line option "
+                           "this version does not know, or no available license.")
             if time.time() > deadline:
                 raise CZEx("RizomUV did not open the TCP port " + str(port) + " within "
                            + str(timeOut) + "s. Check that the instance actually started, "
