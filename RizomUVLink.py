@@ -216,7 +216,14 @@ class CRizomUVLink(CRizomUVLinkBase):
         if platform.system() == "Windows":
             return self.RizomUVWinPath()
         elif platform.system() == "Darwin":
-            return "/Applications/RizomUV.app/Contents/MacOS/RizomUV" #TODO
+            # installs are versioned bundles /Applications/RizomUV.<major>.<minor>.app
+            # whose inner executable carries the same name as the bundle
+            bundles = list(Path("/Applications").glob("RizomUV*.app"))
+            if bundles:
+                import re
+                bundle = max(bundles, key=lambda p: [int(n) for n in re.findall(r"\d+", p.name)])
+                return str(bundle / "Contents" / "MacOS" / bundle.stem)
+            return "/Applications/RizomUV.app/Contents/MacOS/RizomUV"
         elif platform.system() == "Linux":
             return "/usr/bin/RizomUV" #TODO
         else:
