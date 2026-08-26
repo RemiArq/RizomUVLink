@@ -27,7 +27,16 @@
 # SOFTWARE.
 
 
-from win import rizomuvlink
+import platform
+
+if platform.system() == "Windows":
+	from win import rizomuvlink
+elif platform.system() == "Linux":
+	from linux import rizomuvlink
+elif platform.system() == "Darwin":
+	from mac import rizomuvlink
+else:
+	raise ImportError("RizomUVLink has no build for platform: " + platform.system())
 
 CZEx = rizomuvlink.ZEx
 
