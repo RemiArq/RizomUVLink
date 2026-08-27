@@ -151,6 +151,29 @@ initialization wait.
 available separately: start RizomUV with `-id <port>` on its command line, then
 `link.Connect(port)` from Python.
 
+### Detecting changes on the RizomUV side
+
+A live bridge needs to know when something changed in RizomUV — the user
+unfolded, packed, edited a selection — to pull the result back. Two mechanisms,
+from the simplest to the most comfortable:
+
+* **Polling** — `GetVersion("Lib.Mesh.UVW")` returns an integer change-token for
+  a data-tree path *without transferring any data*: poll it at low frequency and
+  pull the data (`Get()` / `Save()`) once the token changes. The token only moves
+  when the value actually changed, so idle polls are stable. See
+  **examples/PollingChanges.py**.
+* **Push notifications** — `Subscribe({"Paths": ["Lib.Mesh.UVW", ...]})`
+  registers the paths to watch; RizomUV then publishes a notification on a
+  dedicated channel (the command port + 1) whenever one of them changes, and
+  `StartNotificationListener(port, callback)` runs a background thread that calls
+  you back on each change — no polling loop, and no external dependency (the
+  subscriber socket is built into the module). The channel is optional and
+  push-only: it never interferes with the command channel, and a program that
+  never calls `Subscribe` is unaffected. See **examples/ChangeNotifications.py**.
+
+Notifications carry no mesh data — they only say "this path changed"; read the
+actual data with `Get()` / `Save()` once notified.
+
 ### Good to know
 
 * `RunRizomUV(background=True)` opens RizomUV *behind* the host application, so
