@@ -63,9 +63,54 @@ The `RizomUVLink` folder ships with RizomUV itself — installing RizomUV is eno
 |---|---|
 | Windows | `<RizomUV installation directory>\RizomUVLink` |
 | macOS | `RizomUV.<version>.app/Contents/Resources/RizomUVLink` (since RizomUV 2026.0) |
-| Linux | not bundled in the AppImage yet — clone this repository |
+| Linux | inside the AppImage at `usr/bin/RizomUVLink` (since RizomUV 2026.0) — run `./RizomUV.<...>.AppImage --appimage-extract` to get a copy, or `--appimage-mount` to read it in place |
 
 Cloning this repository gives the exact same package on any OS.
+
+### Locating the package from code
+
+A plugin cannot ask RizomUVLink where RizomUVLink is before importing it, so
+here is the bootstrap: compute the package path of the most recent RizomUV
+installation, then import. On Windows every setup registers its installation
+directory; on macOS the versioned bundles sit in `/Applications`.
+
+```python
+def RizomUVLinkDir():
+    """Absolute path of the RizomUVLink package shipped with the most recent
+       RizomUV installation, or None when none is found. On Linux there is no
+       registration mechanism: keep a copy of the package (extracted from the
+       AppImage, or cloned from this repository) and point sys.path at it."""
+    import os
+    import platform
+    import re
+    from pathlib import Path
+
+    if platform.system() == "Windows":
+        import winreg
+        for major in range(2029, 2021, -1):
+            for minor in range(10, -1, -1):
+                if major == 2022 and minor < 2:
+                    continue  # RizomUVLink ships since RizomUV 2022.2
+                key_path = "SOFTWARE\\Rizom Lab\\RizomUV VS RS %d.%d" % (major, minor)
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+                    exe_path = winreg.QueryValue(key, "rizomuv.exe")
+                    return os.path.join(os.path.dirname(exe_path), "RizomUVLink")
+                except FileNotFoundError:
+                    pass
+    elif platform.system() == "Darwin":
+        bundles = list(Path("/Applications").glob("RizomUV*.app"))
+        if bundles:
+            newest = max(bundles,
+                         key=lambda p: [int(n) for n in re.findall(r"\d+", p.name)])
+            return str(newest / "Contents" / "Resources" / "RizomUVLink")
+    return None
+
+
+import sys
+sys.path.insert(0, RizomUVLinkDir())
+from RizomUVLink import *
+```
 
 ### Minimal script
 
@@ -75,6 +120,7 @@ documentation shipped with RizomUV):
 
 ```python
 import sys
+# or compute it: see "Locating the package from code" above
 sys.path.insert(0, r"<path to the RizomUVLink folder>")
 
 from RizomUVLink import *
