@@ -225,7 +225,25 @@ class CRizomUVLink(CRizomUVLinkBase):
                 return str(bundle / "Contents" / "MacOS" / bundle.stem)
             return "/Applications/RizomUV.app/Contents/MacOS/RizomUV"
         elif platform.system() == "Linux":
-            return "/usr/bin/RizomUV" #TODO
+            # The package ships inside the AppImage, next to the executable
+            # (usr/bin/RizomUVLink). From a mounted or extracted image the
+            # launchable entry is the AppDir's AppRun -- the bare usr/bin/rizomuv
+            # carries no rpath -- so walk up to it. Outside an AppImage (package
+            # taken from the repo or copied around), fall back to whatever
+            # rizomuv the PATH knows; None lets RunRizomUV say "pass exePath".
+            try:
+                app_dir = Path(__file__).resolve().parents[3]
+                if (app_dir / "AppRun").exists() and \
+                   (app_dir / "usr" / "bin" / "rizomuv").exists():
+                    return str(app_dir / "AppRun")
+            except IndexError:
+                pass
+            import shutil
+            for name in ("rizomuv", "RizomUV"):
+                found = shutil.which(name)
+                if found:
+                    return found
+            return None
         else:
             raise CZEx("Unsupported platform: " + platform.system())
     
