@@ -151,11 +151,17 @@ initialization wait.
 available separately: start RizomUV with `-id <port>` on its command line, then
 `link.Connect(port)` from Python.
 
-### Detecting changes on the RizomUV side
+### Detecting changes on the RizomUV side (optional)
 
-A live bridge needs to know when something changed in RizomUV — the user
-unfolded, packed, edited a selection — to pull the result back. Two mechanisms,
-from the simplest to the most comfortable:
+Everything in RizomUVLink works by request/response: you send a command, you
+read the result when you decide. A batch script, or a bridge that round-trips
+the mesh on the user's demand, needs nothing more — this whole section can be
+ignored.
+
+Change detection only serves one particular style of bridge: the kind that
+leaves RizomUV open in front of the user and mirrors their edits back into the
+DCC as they happen. For that case, two mechanisms, from the simplest to the
+most comfortable:
 
 * **Polling** — `GetVersion("Lib.Mesh.UVW")` returns an integer change-token for
   a data-tree path *without transferring any data*: poll it at low frequency and
