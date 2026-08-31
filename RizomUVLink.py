@@ -91,7 +91,7 @@ class CRizomUVLink(CRizomUVLinkBase):
         super().__init__()
         self.port = None
 
-    def RunRizomUV(self, exePath : str = None, port : int = None, connect : bool = True, wait : bool = True, timeOut : float = 120.0, background : bool = False) -> int:
+    def RunRizomUV(self, exePath : str = None, port : int = None, connect : bool = True, wait : bool = True, timeOut : float = 120.0, background : bool = False, headless : bool = False, iconized : bool = False) -> int:
         """ Runs RizomUV, connect to the instance and wait for it to be ready
 
             RizomUV standalone version must be 2025.0 or later.
@@ -117,6 +117,35 @@ class CRizomUVLink(CRizomUVLinkBase):
             Needs RizomUV 2027.0.297 or later: an older build does not know the flag, and
             answers a command line it cannot parse with a usage message box that nobody
             is there to dismiss, so it would never reach its port.
+
+            headless=True opens no user interface at all: no window, no panel, no dialog,
+            no message box. Every command of this class keeps working, and what a dialog
+            would have shown goes to the command log instead. Use it for batch work and
+            for pipelines, where a window is at best noise and a modal box is a hang.
+
+            It is stronger than background=True and iconized=True, not a variant of
+            either: both of those still put a window on screen. headless overrides them
+            when combined.
+
+            Note that headless is not displayless: RizomUV still needs a desktop session
+            to start (an X display on Linux, a logged-in session on Windows). What it
+            promises is that nothing is drawn, not that none is needed.
+
+            Needs RizomUV 2027.0.417 or later; an older build refuses the flag and never
+            reaches its port.
+
+            iconized=True starts RizomUV minimized: the window exists and has its taskbar
+            entry, it is simply not on screen until someone restores it. Use it when the
+            user may want to look at the result, but not right now -- a batch they might
+            open afterwards.
+
+            It already implies not coming to the front, so adding background=True on top
+            of it buys almost nothing: a minimized window does not take the foreground
+            either way. The pair is accepted rather than useful -- both flags are passed
+            through when both are given, because silently dropping one the caller asked
+            for would be worse than passing a redundant one.
+
+            Available in every RizomUV version this module supports.
 
             returns:
                 The TCP port number used by the RizomUV instance to communicate.
@@ -156,8 +185,20 @@ class CRizomUVLink(CRizomUVLinkBase):
                 # inside a host application whose current directory is not ours to change.
                 import subprocess
                 args = [exePath, "-id", str(self.port)]
-                if background:
-                    args.append("-bg")
+                # headless first, and exclusive: the other two shape a window, a
+                # question that does not arise when there is none.
+                if headless:
+                    args.append("-hl")
+                else:
+                    # Not an elif between these two: an elif would silently drop a flag
+                    # the caller explicitly passed. They are largely redundant with each
+                    # other -- a minimized window does not take the foreground anyway --
+                    # but redundant is not the same as conflicting, and the application
+                    # accepts both.
+                    if iconized:
+                        args.append("-i")
+                    if background:
+                        args.append("-bg")
                 instance = subprocess.Popen(args, cwd=os.path.dirname(exePath))
 
             # wait for the instance to open its port BEFORE anything is sent to it. The

@@ -151,6 +151,50 @@ initialization wait.
 available separately: start RizomUV with `-id <port>` on its command line, then
 `link.Connect(port)` from Python.
 
+### How much of RizomUV appears on screen
+
+`RunRizomUV()` opens a normal RizomUV window that comes to the front. Three
+keyword arguments make it progressively less present, from "polite" to "not
+there at all":
+
+```python
+link.RunRizomUV()                    # window, in front
+link.RunRizomUV(background=True)     # window, behind your application
+link.RunRizomUV(iconized=True)       # window, minimized to the taskbar
+link.RunRizomUV(headless=True)       # no window at all
+```
+
+| | what it changes | when to use it |
+|---|---|---|
+| *(default)* | RizomUV takes the foreground | the user is going to work in RizomUV |
+| `background=True` | the window opens, but your application keeps the focus and stays typeable | a bridge that opens RizomUV while the user is still working |
+| `iconized=True` | the window opens minimized | the user may want to look at the result, but later |
+| `headless=True` | nothing is drawn: no window, no panel, no dialog, no message box | batch work and pipelines |
+
+Every command of this class keeps working in all four. `headless=True` is the
+strongest and overrides the other two — with no window, there is nothing left to
+place or minimize.
+
+Two things worth knowing about `headless=True`:
+
+* **A dialog that would have opened is answered and logged instead**, so a batch
+  never stops on a modal box nobody can see. What it would have said goes to the
+  RizomUV command log.
+* **Headless is not displayless.** RizomUV still needs a desktop session to
+  start — an X display on Linux, a logged-in session on Windows. What the flag
+  promises is that nothing is *drawn*, not that nothing is *needed*. It will not
+  run in a container with no X server, or as a Windows service.
+
+A worked batch — a whole folder unwrapped with nothing on screen, including how
+to tell a mesh that failed to load from one that unwrapped — is in
+**examples/Headless.py**.
+
+Version requirements: `background=True` needs RizomUV 2027.0.297 or later,
+`headless=True` needs 2027.0.417 or later. `iconized=True` works with every
+version this module supports. An older build does not know the flag it is
+given, and answers a command line it cannot parse with a message box nobody is
+there to dismiss — so it never reaches its port.
+
 ### Detecting changes on the RizomUV side (optional)
 
 Everything in RizomUVLink works by request/response: you send a command, you
@@ -182,15 +226,16 @@ actual data with `Get()` / `Save()` once notified.
 
 ### Good to know
 
-* `RunRizomUV(background=True)` opens RizomUV *behind* the host application, so
-  the window being worked in keeps the focus (needs RizomUV 2027.0.297 or later).
+* How visible the RizomUV window is — in front, behind, minimized, or not there
+  at all — is chosen at launch: see *How much of RizomUV appears on screen*.
 * Several RizomUV instances can run simultaneously — one `CRizomUVLink` object
   each. Beware with floating licenses: every instance takes a license token.
 * Errors raised on the RizomUV side reach Python as a `CZEx` exception.
 
 ## Help
 
-Have a look at the **examples** folder, especially at **Simple.py**. The full
+Have a look at the **examples** folder, especially at **Simple.py** to get
+started and **Headless.py** for a batch that runs with no window. The full
 command reference is the scripting documentation shipped with RizomUV.
 
 ## Authors
