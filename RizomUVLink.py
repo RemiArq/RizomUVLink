@@ -114,7 +114,7 @@ class CRizomUVLink(CRizomUVLinkBase):
             the foreground from whoever started it, which is why the default is to come
             to the front.
 
-            Needs RizomUV 2026.0.297 or later: an older build does not know the flag, and
+            Needs RizomUV 2027.0.297 or later: an older build does not know the flag, and
             answers a command line it cannot parse with a usage message box that nobody
             is there to dismiss, so it would never reach its port.
 
@@ -255,7 +255,7 @@ class CRizomUVLink(CRizomUVLinkBase):
             of the RizomUV installation directory on the system using
             the windows registry.
             
-            Try versions from 2029.10 to 2025.0 included
+            Try versions from 2029.10 down to 2026.0 included
         """
         import winreg
 

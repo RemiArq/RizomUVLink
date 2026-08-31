@@ -52,7 +52,7 @@ Tell us if you need another Python version or platform combination.
 
 ### Dependencies
 
-* RizomUV Standalone version 2026.0 or later, available at https://rizomuv.com
+* RizomUV Standalone version 2027.0 or later, available at https://rizomuv.com
 * One of the Python versions of the matrix above
 
 ### Where to find the package
@@ -62,8 +62,8 @@ The `RizomUVLink` folder ships with RizomUV itself — installing RizomUV is eno
 | OS | Location |
 |---|---|
 | Windows | `<RizomUV installation directory>\RizomUVLink` |
-| macOS | `RizomUV.<version>.app/Contents/Resources/RizomUVLink` (since RizomUV 2026.0) |
-| Linux | inside the AppImage at `usr/bin/RizomUVLink` (since RizomUV 2026.0) — run `./RizomUV.<...>.AppImage --appimage-extract` to get a copy, or `--appimage-mount` to read it in place |
+| macOS | `RizomUV.<version>.app/Contents/Resources/RizomUVLink` (since RizomUV 2027.0) |
+| Linux | inside the AppImage at `usr/bin/RizomUVLink` (since RizomUV 2027.0) — run `./RizomUV.<...>.AppImage --appimage-extract` to get a copy, or `--appimage-mount` to read it in place |
 
 Cloning this repository gives the exact same package on any OS.
 
@@ -183,7 +183,7 @@ actual data with `Get()` / `Save()` once notified.
 ### Good to know
 
 * `RunRizomUV(background=True)` opens RizomUV *behind* the host application, so
-  the window being worked in keeps the focus (needs RizomUV 2026.0.297 or later).
+  the window being worked in keeps the focus (needs RizomUV 2027.0.297 or later).
 * Several RizomUV instances can run simultaneously — one `CRizomUVLink` object
   each. Beware with floating licenses: every instance takes a license token.
 * Errors raised on the RizomUV side reach Python as a `CZEx` exception.
