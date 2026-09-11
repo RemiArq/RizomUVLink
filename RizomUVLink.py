@@ -296,18 +296,41 @@ class CRizomUVLink(CRizomUVLinkBase):
             of the RizomUV installation directory on the system using
             the windows registry.
             
-            Try versions from 2029.10 down to 2026.0 included
+            Every "RizomUV VS RS <major>.<minor>" key under HKLM\\SOFTWARE\\Rizom Lab
+            from 2026.0 up is tried, highest version first: the first one that
+            carries an installation path wins. None when there is none.
         """
+        import re
         import winreg
 
-        for i in range(9, 5, -1):
-            for j in range(10, -1, -1):
-                if i == 2 and j < 2:
-                    continue
-                path = "SOFTWARE\\Rizom Lab\\RizomUV VS RS 202" + str(i) + "." + str(j)
+        # the oldest standalone this package can drive; newer ones need no edit here
+        MIN_VERSION = (2026, 0)
+
+        try:
+            root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Rizom Lab")
+        except FileNotFoundError:
+            return None
+
+        with root:
+            versions = []
+            index = 0
+            while True:
                 try:
-                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
-                    exePath = winreg.QueryValue(key, "rizomuv.exe")
+                    name = winreg.EnumKey(root, index)
+                except OSError:  # no more subkeys
+                    break
+                index += 1
+                match = re.fullmatch(r"RizomUV VS RS ([0-9]+)\.([0-9]+)", name)
+                if match:
+                    # compared as integers, so 2027.10 ranks above 2027.2
+                    version = (int(match.group(1)), int(match.group(2)))
+                    if version >= MIN_VERSION:
+                        versions.append((version, name))
+
+            for version, name in sorted(versions, reverse=True):
+                try:
+                    with winreg.OpenKey(root, name) as key:
+                        exePath = winreg.QueryValue(key, "rizomuv.exe")
                     return os.path.dirname(exePath)
                 except FileNotFoundError:
                     pass

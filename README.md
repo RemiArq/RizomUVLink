@@ -87,14 +87,30 @@ def RizomUVLinkDir():
 
     if platform.system() == "Windows":
         import winreg
-        for major in range(2029, 2021, -1):
-            for minor in range(10, -1, -1):
-                if major == 2022 and minor < 2:
-                    continue  # RizomUVLink ships since RizomUV 2022.2
-                key_path = "SOFTWARE\\Rizom Lab\\RizomUV VS RS %d.%d" % (major, minor)
+        try:
+            root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Rizom Lab")
+        except FileNotFoundError:
+            return None
+        with root:
+            # every "RizomUV VS RS <major>.<minor>" key, compared as integers
+            # (2027.10 ranks above 2027.2), highest first
+            versions = []
+            index = 0
+            while True:
                 try:
-                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
-                    exe_path = winreg.QueryValue(key, "rizomuv.exe")
+                    name = winreg.EnumKey(root, index)
+                except OSError:  # no more subkeys
+                    break
+                index += 1
+                match = re.fullmatch(r"RizomUV VS RS ([0-9]+)\.([0-9]+)", name)
+                if match:
+                    version = (int(match.group(1)), int(match.group(2)))
+                    if version >= (2022, 2):  # RizomUVLink ships since RizomUV 2022.2
+                        versions.append((version, name))
+            for version, name in sorted(versions, reverse=True):
+                try:
+                    with winreg.OpenKey(root, name) as key:
+                        exe_path = winreg.QueryValue(key, "rizomuv.exe")
                     return os.path.join(os.path.dirname(exe_path), "RizomUVLink")
                 except FileNotFoundError:
                     pass
