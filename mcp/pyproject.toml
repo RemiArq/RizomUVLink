@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rizomuv-mcp"
+version = "0.1.0"
+description = "MCP server for RizomUV: load, unfold, pack, measure and save UVs from an AI assistant"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Rizom Lab", email = "contact@rizom-lab.com" }]
+# The binding is NOT a dependency: it ships inside every RizomUV install
+# (<install>/RizomUVLink), compiled per Python minor, and rizomuv_mcp.binding finds it
+# there. Upper bound = the newest minor a rizomuvlink_python3XY module exists for; raise
+# it when RizomUVLink ships the next one. mcp 2.2 itself needs 3.10.
+requires-python = ">=3.10,<3.14"
+dependencies = ["mcp>=2.2,<3", "numpy>=1.26"]
+classifiers = ["Programming Language :: Python :: 3", "Operating System :: Microsoft :: Windows",
+               "Operating System :: MacOS", "Operating System :: POSIX :: Linux",
+               "Topic :: Multimedia :: Graphics :: 3D Modeling"]
+
+[project.scripts]
+rizomuv-mcp = "rizomuv_mcp.__main__:main"
+
+[project.urls]
+Homepage = "https://www.rizom-lab.com"
+
+# Only the server package: boot.py, vendor/ (the installer's copy of the dependencies),
+# tools/ and tests/ are for the RizomUV install and the repository, not for a wheel.
+[tool.setuptools.packages.find]
+include = ["rizomuv_mcp*"]
