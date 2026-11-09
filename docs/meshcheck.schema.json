@@ -1,0 +1,101 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://github.com/RemiArq/RizomUVLink/blob/main/docs/meshcheck.schema.json",
+	"title": "RizomUV Mesh Check report",
+	"description": "The JSON report RizomUV's Mesh Checker writes: every case of every check, by the file's own vertex and face IDs. Semantics in MeshCheckReport.md.",
+	"type": "object",
+	"required": ["format", "formatVersion", "generator", "date", "source", "parameters", "objects", "checks"],
+	"properties": {
+		"format": { "const": "rizomuv.meshcheck" },
+		"formatVersion": { "type": "integer", "minimum": 1 },
+		"formatDoc": { "type": "string" },
+		"schema": { "type": "string" },
+		"generator": { "type": "string" },
+		"date": { "type": "string" },
+		"source": {
+			"type": "object",
+			"required": ["file", "upAxis", "unit", "vertexCount", "faceCount"],
+			"properties": {
+				"file": { "type": "string" },
+				"upAxis": { "enum": ["x", "y", "z"] },
+				"unit": { "type": "string" },
+				"vertexCount": { "$ref": "#/$defs/count" },
+				"faceCount": { "$ref": "#/$defs/count" }
+			}
+		},
+		"conventions": { "type": "object", "additionalProperties": { "type": "string" } },
+		"parameters": {
+			"type": "object",
+			"required": ["maxNonPlanarDeg", "poleMinEdges"],
+			"properties": {
+				"maxNonPlanarDeg": { "type": "number", "minimum": 0 },
+				"poleMinEdges": { "type": "integer", "minimum": 3 }
+			}
+		},
+		"objects": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["name", "faceCount", "vertexBase", "vertexCount"],
+				"properties": {
+					"name": { "type": "string" },
+					"faceCount": { "type": "integer", "minimum": 1 },
+					"vertexBase": { "type": "integer", "minimum": 0 },
+					"vertexCount": { "$ref": "#/$defs/count" }
+				}
+			}
+		},
+		"checks": {
+			"type": "array",
+			"minItems": 11,
+			"items": { "$ref": "#/$defs/check" }
+		}
+	},
+	"$defs": {
+		"count": { "type": "integer", "minimum": 0 },
+		"id": { "type": "integer", "minimum": -1, "description": "0-based ID; -1 when it cannot be resolved" },
+		"ids": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+		"position": { "type": ["array", "null"], "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+		"check": {
+			"type": "object",
+			"required": ["id", "category", "label", "kind", "uvEffect", "description", "suggestedFix", "count", "instances"],
+			"properties": {
+				"id": { "enum": ["NonManifoldEdges", "InconsistentNormals", "NonManifoldVertices", "DegenerateFaces", "ZeroAreaFaces", "FlippedNormals", "IsolatedVertices", "NonPlanarFaces", "OverlappingFaces", "ComplexPoles", "Valence2Vertices"] },
+				"category": { "enum": ["file", "measure"] },
+				"label": { "type": "string" },
+				"kind": { "enum": ["Edge", "Vertex", "Polygon"] },
+				"uvEffect": { "type": "string" },
+				"description": { "type": "string" },
+				"suggestedFix": { "type": "string" },
+				"count": { "$ref": "#/$defs/count" },
+				"instances": { "type": "array", "items": { "$ref": "#/$defs/instance" } }
+			}
+		},
+		"instance": {
+			"type": "object",
+			"description": "Which fields an instance has depends on its check: see MeshCheckReport.md",
+			"properties": {
+				"object": { "type": "integer", "minimum": 0 },
+				"face": { "$ref": "#/$defs/id" },
+				"faceLocal": { "$ref": "#/$defs/id" },
+				"faces": { "$ref": "#/$defs/ids" },
+				"facesLocal": { "$ref": "#/$defs/ids" },
+				"vertex": { "$ref": "#/$defs/id" },
+				"vertexLocal": { "$ref": "#/$defs/id" },
+				"vertices": { "$ref": "#/$defs/ids" },
+				"verticesLocal": { "$ref": "#/$defs/ids" },
+				"position": { "$ref": "#/$defs/position" },
+				"positions": { "type": "array", "items": { "$ref": "#/$defs/position" } },
+				"fans": { "type": "array", "items": { "$ref": "#/$defs/ids" } },
+				"reason": { "enum": ["one vertex", "two vertices", "repeated vertex or no triangulation"] },
+				"deviationDeg": { "type": "number", "minimum": 0 },
+				"overlaps": { "$ref": "#/$defs/ids" },
+				"overlapsLocal": { "$ref": "#/$defs/ids" },
+				"valence": { "type": "integer", "minimum": 3 },
+				"neighbours": { "$ref": "#/$defs/ids" },
+				"neighboursLocal": { "$ref": "#/$defs/ids" },
+				"onBorder": { "type": "boolean" }
+			}
+		}
+	}
+}

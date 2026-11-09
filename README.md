@@ -240,6 +240,17 @@ most comfortable:
 Notifications carry no mesh data — they only say "this path changed"; read the
 actual data with `Get()` / `Save()` once notified.
 
+### Checking a mesh before UV work (optional)
+
+`MeshCheck({"File": "<path>.meshcheck.json"})` writes RizomUV's Mesh Check report:
+every problem of the loaded mesh — non-manifold edges and vertices, inconsistent or
+flipped normals, degenerate and zero-area faces, isolated vertices, overlapping
+(doubled) faces, non-planar faces, poles, valence-2 vertices — named by the file's own
+vertex and face IDs, global and local to each object, so that a plugin can find and fix
+them on the DCC side. The format, written to be read by a plugin or by an AI assistant,
+is **docs/MeshCheckReport.md**, with a JSON Schema in **docs/meshcheck.schema.json**.
+See **examples/MeshCheck.py**.
+
 ### Good to know
 
 * How visible the RizomUV window is — in front, behind, minimized, or not there
