@@ -20,16 +20,16 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-"""Check a mesh before UV work, and list its problems object by object.
+"""Check a mesh before the UVs, and list its problems for each object.
 
-RizomUV reads the mesh, writes its Mesh Check report as JSON, and this script reads
-the report back: what a plugin in a DCC does before fixing the mesh on its side. The
-format is described in ../docs/MeshCheckReport.md, with a JSON Schema next to it.
+RizomUV loads the mesh and saves its Mesh Check report as JSON. Then this script reads
+the report. A plugin in a 3D software does the same before it fixes the mesh. The
+format is explained in ../docs/MeshCheckReport.md, and the JSON Schema is next to it.
 
     python MeshCheck.py path/to/mesh.fbx
 
-The report is written next to the mesh, as <mesh>.meshcheck.json. Needs a RizomUV with
-the Mesh Checker (2027.0 builds from November 2026 on).
+The report is saved next to the mesh, as <mesh>.meshcheck.json. You need a RizomUV with
+the Mesh Checker (2027.0 builds from November 2026 or later).
 """
 
 import json
