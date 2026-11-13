@@ -76,6 +76,115 @@ instance points at), `uvEffect` (two or three words), `description`, `suggestedF
 works around it when it unfolds, the file keeps it — and **`measure`** for a property
 measured against a threshold, which is a matter of quality, not an error.
 
+## Winding, orientation and normals
+
+Two checks — `FlippedNormals` and `InconsistentNormals` — are about the orientation of
+the faces. They carry the names every DCC uses, which speak of *normals*; what they
+check is the *winding*. This section explains the difference, because a plugin or an
+assistant that confuses the two will apply the wrong fix.
+
+### Winding
+
+A face lists its vertices in an order: that order is its **winding**. Looking at a face
+from the side where its vertices turn counter-clockwise, you look at its **front**. So
+the winding decides which side of the face is the front. Reverse the list, and the front
+and the back swap.
+
+### The normal that follows from the winding
+
+The **normal** of a face, in this sense, is the direction its front points to. It is
+not stored anywhere: it follows from the winding and the positions. Reverse the winding,
+and this normal flips. That is why every DCC talks about "flipped normals" when a face
+is turned the wrong way, and fixes it by reversing the face: the normal is how the
+problem shows on screen (a black or back-facing polygon), the winding is where it is.
+
+### The normals of the file are something else
+
+A file can also store **normals** of its own (OBJ `vn`, FBX and USD normals): one
+direction per corner, used for shading. They are data, set by the modeller or a tool,
+and can point anywhere. **The two checks do not report them.** They read only the
+winding and how faces share their edges: topology, not directions.
+
+The file's normals play one part: when RizomUV has to decide which way a surface faces
+(below), it lets them vote — a face whose winding agrees with its file normals counts
+for its side. Without file normals, the majority of the faces decides.
+
+### Consistent orientation, and flipped normals
+
+Two neighbouring faces are **consistently oriented** when they run along their shared
+edge in **opposite** directions: their fronts are then on the same side of the surface.
+On a cube whose faces all face outward, every edge is run once each way.
+
+If one face of that cube is written the other way round, the edges around it are run
+twice the same way: its front is inside, the others' outside. The surface can still be
+made consistent — reverse that one face. That is **`FlippedNormals`**: a face wound
+against its neighbours, fixed by reversing it. RizomUV reverses it in its own copy and
+reports it; your file keeps it.
+
+### Surfaces that cannot be oriented
+
+Some surfaces cannot be made consistent at all. A **Moebius strip** is a ribbon closed
+with a half twist: start on a face, front up, and walk from face to face keeping the
+same front side; after one turn you arrive on the **other** side of the face you started
+from. Whatever faces you reverse, at least one edge stays run twice the same way —
+reversing only moves the conflict to the next edge. Such a surface is
+**non-orientable**: it has no front and back.
+
+That is **`InconsistentNormals`**, labelled *Non-orientable edges*: the edges left in
+conflict after RizomUV oriented the surface as best it could. A literal Moebius strip is
+rare; the usual causes are a weld that closed a tube or a ring with a half turn, or a
+merge of vertices that glued the front of one part to the back of another. The fix is to
+cut the surface (or rebuild it); RizomUV unfolds those edges as cuts.
+
+### Telling the two apart
+
+| | `FlippedNormals` — *Flipped normals* | `InconsistentNormals` — *Non-orientable edges* |
+|---|---|---|
+| What is wrong | one face, or a few, turned the wrong way | the shape itself has no front and back |
+| Can reversing faces fix it? | yes | no, never |
+| What the instance points at | faces | edges |
+| What RizomUV does | turns them, no seam added | cuts there: a seam nobody drew |
+| Fix in the DCC | Conform (Maya), Unify (3ds Max), Recalculate Outside (Blender), or Reverse / Flip | cut or rebuild the surface; Conform and the like cannot succeed |
+
+On a non-orientable surface RizomUV may also have reversed some faces while trying:
+they show in FlippedNormals too. There, the edge is the problem, not those faces.
+
+### What the two checks do not see
+
+- **A whole object inside out**, every face consistently wound but facing inward: no
+  neighbour disagrees, so nothing is reported. Most DCCs call that "flipped normals" too.
+- **A face whose winding disagrees with its own file normals** while agreeing with its
+  neighbours: nothing in the topology is wrong, so nothing is reported.
+
+Both are disagreements between the winding and the file's normals, a check of
+directions these two checks do not make.
+
+### The same problems in the DCCs
+
+| DCC | How it names the problem | What fixes it |
+|---|---|---|
+| Blender | *Non Contiguous* (Select All by Trait): the edges between two faces with opposite normals — the border of flipped faces, and non-orientable edges | Recalculate Outside, Flip |
+| Maya | no named check; "normals not facing the same way" | Conform (majority side), Reverse |
+| 3ds Max | "inconsistent normals", some outward and some inward; xView *Face Orientation* | Unify, Flip |
+| Houdini | "inconsistently wound polygons" (PolyDoctor) | *Correct Winding of Polygons to Majority of their Manifold Patch* |
+
+No DCC names the non-orientable case: their tools simply fail on it.
+
+## Vocabulary
+
+| Word | Meaning |
+|---|---|
+| **vertex, edge, face** | a point, a segment between two vertices, a polygon. RizomUV says *polygon* in its interface, the report says *face* |
+| **winding** | the order in which a face lists its vertices; it decides which side is the front |
+| **normal** | the direction the front of a face points to, as the winding implies. Not the normals stored in the file |
+| **consistently oriented** | two neighbouring faces run along their shared edge in opposite directions |
+| **non-orientable** | a surface no winding can make consistent, like a Moebius strip |
+| **manifold** | every edge has at most two faces, and the faces around each vertex form one fan |
+| **fan** | the faces around a vertex that follow one another, two neighbours sharing an edge |
+| **border** | an edge with only one face |
+| **valence** | the number of edges a vertex has |
+| **island, seam** | in the UVs, a piece unfolded on its own, and the cut edges that bound it |
+
 ## Interpreting each check
 
 Severity, for a user who wants clean UVs: **high** changes the seams or islands behind
@@ -92,14 +201,18 @@ face on the edge, three or more), `facesLocal`.
 Fix: keep two of the faces on that edge; detach the others (they become their own
 shell) or delete them if they are leftovers.
 
-### InconsistentNormals — high, `file`, kind `Edge`
+### InconsistentNormals — *Non-orientable edges* — high, `file`, kind `Edge`
 
-An edge between two faces wound against each other, with no way to make the whole
-surface agree: a non-orientable surface (a Moebius strip) or a shell mixing two windings.
-Unfolded as a cut, like the previous check. Instance: same fields as NonManifoldEdges.
-Fix: reverse the faces on one side (Maya *Conform*, Blender *Recalculate Outside*); a
-truly non-orientable surface has to be cut somewhere.
-Expect its faces to show also in FlippedNormals and, being twisted, in NonPlanarFaces.
+An edge where the two faces can **never** be oriented consistently: the surface has no
+front and back (a non-orientable surface, such as a Moebius strip). RizomUV first
+orients every surface as best it can, reversing the faces that disagree (those become
+FlippedNormals); the edges left are the ones no reversing can fix. Reversing faces only
+moves the conflict to another edge. RizomUV unfolds the edge as if it were cut there:
+a seam the user never drew. Instance: same fields as NonManifoldEdges.
+Fix: cut the surface along the edge (a real seam, or detach), or rebuild that part.
+**Not** reversing faces, and not *Conform* / *Recalculate*, which cannot succeed here.
+Expect the faces of such a surface to show also in FlippedNormals (RizomUV reversed some
+of them while trying) and, the surface being twisted, in NonPlanarFaces.
 
 ### NonManifoldVertices — high, `file`, kind `Vertex`
 
@@ -130,12 +243,16 @@ moves its vertices by a tiny amount in its own copy so its solvers can run: the 
 around it can stretch. Instance: `face`, `faceLocal`, `vertices`.
 Fix: collapse or delete the face, or move its vertices apart.
 
-### FlippedNormals — medium, `file`, kind `Polygon`
+### FlippedNormals — *Flipped normals* — medium, `file`, kind `Polygon`
 
-A face wound the other way round than the faces connected to it. RizomUV unfolds it the
-right way round; the DCC shows it as a back face. Instance: `face`, `faceLocal`,
-`vertices`.
-Fix: reverse the face's winding.
+A face oriented against the faces around it, on a surface that can be oriented (see
+*Winding, orientation and normals* above): its winding runs the same way as a
+neighbour's along their shared edge, so its normal points to the other side. Which side is right is decided by the majority of the connected faces,
+or by the file's own normals when it has some. RizomUV unfolds it the right way round;
+the DCC shows it as a back face. Instance: `face`, `faceLocal`, `vertices` (the corner
+list in the file's order, the order to reverse).
+Fix: reverse the face's winding (Maya *Reverse*, Blender *Flip*), or conform the normals
+of its object (Maya *Conform*, Blender *Recalculate Outside*).
 
 ### IsolatedVertices — low, `file`, kind `Vertex`
 
@@ -189,7 +306,8 @@ Rules an assistant should follow:
 2. **Count problems, not instances, where they pair up**: OverlappingFaces lists each
    pair twice. Report "3 doubled faces", not "6".
 3. **Expect one problem to show in several checks.** A Moebius strip is
-   InconsistentNormals, and its faces also show in FlippedNormals and NonPlanarFaces; a
+   InconsistentNormals (non-orientable edges), and its faces also show in FlippedNormals
+   (flipped normals) and NonPlanarFaces; a
    face written twice is NonManifoldVertices (its corners) and OverlappingFaces. Explain
    the root cause once.
 4. **Group by object** (`objects[instance.object].name`): users think in objects. A whole
@@ -204,6 +322,11 @@ Rules an assistant should follow:
    last, from the highest ID down. Then produce a new report to confirm.
 8. **Prefer local IDs inside a DCC** (`faceLocal`, `vertexLocal` on the mesh named by
    `object`); use global IDs for OBJ, whose numbering is global to the file.
+9. **Read FlippedNormals and InconsistentNormals as winding, not as the file's
+   normals.** They report how faces are wound against their neighbours; the normals the
+   file stores are not what they check (see *Winding, orientation and normals*). Do not
+   tell a user to edit or unlock normals for them, and do not apply Conform to
+   InconsistentNormals: only a cut fixes it.
 
 A short explanation for a user, built from a report, looks like:
 

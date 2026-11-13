@@ -243,8 +243,8 @@ actual data with `Get()` / `Save()` once notified.
 ### Checking a mesh before UV work (optional)
 
 `MeshCheck({"File": "<path>.meshcheck.json"})` writes RizomUV's Mesh Check report:
-every problem of the loaded mesh — non-manifold edges and vertices, inconsistent or
-flipped normals, degenerate and zero-area faces, isolated vertices, overlapping
+every problem of the loaded mesh — non-manifold edges and vertices, flipped normals,
+non-orientable edges, degenerate and zero-area faces, isolated vertices, overlapping
 (doubled) faces, non-planar faces, poles, valence-2 vertices — named by the file's own
 vertex and face IDs, global and local to each object, so that a plugin can find and fix
 them on the DCC side. The format, written to be read by a plugin or by an AI assistant,
