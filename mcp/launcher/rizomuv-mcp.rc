@@ -1,0 +1,46 @@
+// Version resource of rizomuv-mcp.exe. The numbers are passed on the rc command line by
+// MakeMcpLauncher (RizomUVApp/makefiledist.inc.php; same git-derived RIZOMUV_V_* as
+// rizomuv.rc, see docs/versioning.md there): the Inno Setup entry has no ignoreversion, so
+// this FILEVERSION is what stops an older installer from downgrading the launcher a newer
+// one installed.
+#include <winver.h>
+#ifndef RIZOMUV_V_MAJOR
+#define RIZOMUV_V_MAJOR 0
+#endif
+#ifndef RIZOMUV_V_MINOR
+#define RIZOMUV_V_MINOR 0
+#endif
+#ifndef RIZOMUV_V_REV
+#define RIZOMUV_V_REV 0
+#endif
+#define RMCP_STR2(x) #x
+#define RMCP_STR(x)  RMCP_STR2(x)
+#define RMCP_VERSION_STR RMCP_STR(RIZOMUV_V_MAJOR) "." RMCP_STR(RIZOMUV_V_MINOR) "." RMCP_STR(RIZOMUV_V_REV)
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    RIZOMUV_V_MAJOR,RIZOMUV_V_MINOR,RIZOMUV_V_REV,0
+ PRODUCTVERSION RIZOMUV_V_MAJOR,RIZOMUV_V_MINOR,RIZOMUV_V_REV,0
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0x0L
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "Rizom Lab"
+            VALUE "FileDescription",  "RizomUV MCP server launcher"
+            VALUE "FileVersion",      RMCP_VERSION_STR
+            VALUE "InternalName",     "rizomuv-mcp"
+            VALUE "LegalCopyright",   "Copyright (C) " RMCP_STR(RIZOMUV_V_MAJOR) " Rizom Lab"
+            VALUE "OriginalFilename", "rizomuv-mcp.exe"
+            VALUE "ProductName",      "RizomUV"
+            VALUE "ProductVersion",   RMCP_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
