@@ -48,17 +48,20 @@ the entry's `env`. `rizomuv-mcp --launcher-info` prints what it resolved (on std
 | `connect` | Choose or switch: the open RizomUV, a private headless one, or one port in particular. |
 | `load` | Load a mesh file with its UVs. Replaces the scene — refused on your own RizomUV unless you agreed. |
 | `unfold` | Flatten the islands of the working set. |
-| `pack` | Lay the islands into the 0–1 tile at a given resolution and padding, then measure the result. |
+| `pack` | Lay the islands into the 0–1 tile at a given resolution and padding, then measure the result. Islands outside every tile are packed too, as the Pack button does. |
 | `measure` | Coverage, overlap between islands, island sizes, out-of-tile islands, border length, padding share. |
 | `diagnose` | The same numbers turned into findings, each naming the lever that fixes it. |
 | `render_layout` | A PNG of the layout: island borders, or a distortion heat map; the whole tile or a zoom. |
 | `save` | Write the scene with its UVs to a new file. Your current file in RizomUV is left alone. |
 | `undo` | Undo the last steps. |
+| `uv_sets` | List the UV sets (the current one, the texture of each), and duplicate, create, rename, delete or make one current. |
+| `transfer_texture` | Bake a texture from one UV set onto another, after a new unwrap: the image is resampled onto the new layout. |
+| `command_help` | The list of the commands `run_command` passes, and the full documentation of one. Starts nothing. |
 | `run_command` | Any other RizomUV command, behind a policy (see below). |
 
-Resources: `rizomuv://commands` (every command, its category and whether `run_command` passes it),
-`rizomuv://command/<name>` (the parameters of one command, read from the running RizomUV) and
-`rizomuv://guide/packing` (what actually moves coverage, measured).
+The same documentation is also published as resources, for the clients that read them on their own
+(Claude Desktop does not): `rizomuv://commands`, `rizomuv://command/<name>` and
+`rizomuv://guide/packing` (what actually moves coverage, measured; `command_help('guide:packing')`).
 
 Measurements are **independent of RizomUV**: coverage and overlap are recomputed in the server from
 the UV coordinates, so they cannot repeat a mistake RizomUV would make about its own work.
