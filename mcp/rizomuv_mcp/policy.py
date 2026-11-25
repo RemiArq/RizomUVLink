@@ -141,6 +141,9 @@ _add("Save", "save_export", False, True,
 _add("RasterExport", "save_export", False, True,
      "Use the render_layout tool, which renders the layout to a private folder and returns the image.")
 _add("PsExport", "save_export", False, True, f"PsExport writes files; {_HEADLESS_ONLY}.")
+_add("TextureTransfer", "save_export", False, True,
+     "Use the transfer_texture tool, which checks the UV sets and the files and never overwrites without "
+     "overwrite=true.")
 _add("Set", "set", False, True,
      f"Set writes the artist's session state or preferences without undo; {_HEADLESS_ONLY}.",
      guard=_set_guard)

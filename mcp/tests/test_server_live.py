@@ -16,7 +16,7 @@ from rizomuv_mcp.config import Config
 from rizomuv_mcp.server import build_server
 
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose", "render_layout",
-                  "save", "undo", "run_command"}
+                  "save", "undo", "run_command", "transfer_texture", "uv_sets"}
 
 
 def text(result):
@@ -264,3 +264,68 @@ def test_mech8_pack_and_diagnose(snap_exe, isolated_dirs, mech8):
                     assert 0.14 <= d["metrics"]["padding_share_estimate"] <= 0.16
     anyio.run(go)
     print("Mech8 timings (s):", timings)
+
+
+@pytest.mark.live
+def test_transfer_texture(snap_exe, isolated_dirs, example_mesh, tmp_path):
+    """A texture of the Default set goes onto a repacked copy of it, and back; the refusals name the fix."""
+    import struct, zlib
+    source = tmp_path / "grid.png"
+    rows = b"".join(b"\0" + bytes(c for x in range(256) for c in (x, y, (x ^ y) & 255)) for y in range(256))
+    chunk = lambda kind, body: (struct.pack(">I", len(body)) + kind + body
+                                + struct.pack(">I", zlib.crc32(kind + body)))
+    source.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 256, 256, 8, 2, 0, 0, 0))
+                       + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+    out = tmp_path / "on_b.png"
+
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(example_mesh)}))
+            r = await call(c, "transfer_texture", {"dest_uv_set": "B", "output_file": str(out)})
+            assert r.is_error and "Its UV sets: Default" in text(r)
+            data(await call(c, "uv_sets", {"action": "duplicate", "name": "B"}))
+            r = await call(c, "transfer_texture", {"dest_uv_set": "B", "output_file": str(out)})
+            assert r.is_error and "no texture assigned" in text(r)
+            r = await call(c, "transfer_texture", {"dest_uv_set": "Default", "output_file": str(out),
+                                                   "source_file": str(source)})
+            assert r.is_error and "both 'Default'" in text(r)
+            data(await call(c, "uv_sets", {"action": "set_current", "name": "B"}))
+            data(await call(c, "pack", {"padding_px": 8, "measure": False}))
+            data(await call(c, "uv_sets", {"action": "set_current", "name": "Default"}))
+            res = data(await call(c, "transfer_texture", {"dest_uv_set": "B", "output_file": str(out),
+                                                          "source_file": str(source), "size_px": 128}))
+            assert (res["source_uv_set"], res["width"], res["height"]) == ("Default", 128, 128)
+            assert out.is_file() and 0 < res["coverage"] <= 1
+            r = await call(c, "transfer_texture", {"dest_uv_set": "B", "output_file": str(out),
+                                                   "source_file": str(source)})
+            assert r.is_error and "overwrite=true" in text(r)
+            back = data(await call(c, "transfer_texture", {"source_uv_set": "B", "dest_uv_set": "Default",
+                                                           "source_file": str(out),
+                                                           "output_file": str(tmp_path / "back.png")}))
+            assert back["dest_uv_set"] == "Default" and (tmp_path / "back.png").is_file()
+    anyio.run(go)
+
+@pytest.mark.live
+def test_uv_sets(snap_exe, isolated_dirs, example_mesh):
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(example_mesh)}))
+            state = data(await call(c, "uv_sets"))
+            assert state["current"] == "Default" and [s["name"] for s in state["uv_sets"]] == ["Default"]
+            state = data(await call(c, "uv_sets", {"action": "duplicate", "name": "B"}))
+            assert [s["name"] for s in state["uv_sets"]] == ["Default", "B"] and state["current"] == "Default"
+            r = await call(c, "uv_sets", {"action": "duplicate", "name": "B"})
+            assert r.is_error and "exists already" in text(r)
+            state = data(await call(c, "uv_sets", {"action": "rename", "source": "B", "name": "Lightmap"}))
+            assert [s["name"] for s in state["uv_sets"]] == ["Default", "Lightmap"]
+            state = data(await call(c, "uv_sets", {"action": "set_current", "name": "Lightmap"}))
+            assert state["current"] == "Lightmap"
+            r = await call(c, "uv_sets", {"action": "delete", "name": "Lightmap"})
+            assert r.is_error and "set_current" in text(r)
+            data(await call(c, "uv_sets", {"action": "create", "name": "Fresh"}))
+            data(await call(c, "uv_sets", {"action": "set_current", "name": "Default"}))
+            state = data(await call(c, "uv_sets", {"action": "delete", "name": "Lightmap"}))
+            assert [s["name"] for s in state["uv_sets"]] == ["Default", "Fresh"]
+            r = await call(c, "uv_sets", {"action": "set_current", "name": "Nope"})
+            assert r.is_error and "UV sets: Default, Fresh" in text(r)
+    anyio.run(go)

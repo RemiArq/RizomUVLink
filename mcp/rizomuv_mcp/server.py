@@ -534,6 +534,155 @@ def build_server(config) -> MCPServer:
             raise ToolError("RizomUV did not write %s (a demo licence silently skips saving)." % p)
         return {"path": str(p), "bytes": p.stat().st_size, "seconds": round(time.perf_counter() - t0, 2)}
 
+    async def _uv_sets_state(session, progress):
+        names = await session.execute("ItemNames", "Lib.UVSets", label="UV sets", progress=progress)
+        names = [str(n) for n in names] if isinstance(names, list) else []
+        current = await session.execute("Get", "Lib.CurrentUVSetName", label="UV sets", progress=progress)
+        sets = []
+        for name in names:
+            texture = await session.execute("Get", "Lib.UVSets.%s.RootGroup.Properties.Texture" % name,
+                                            label="UV sets", progress=progress)
+            sets.append({"name": name, "current": name == current,
+                         "texture": texture if isinstance(texture, str) and texture else None})
+        return {"current": current, "uv_sets": sets}
+
+    @mcp.tool(title="UV sets", description=(
+        "List and manage the UV sets of the mesh: several UV layouts of the same polygons (lightmap, "
+        "texture set, an old and a new unwrap). Tools such as unfold and pack work on the CURRENT set. "
+        "action='list' (default) changes nothing. 'duplicate' copies a set (source, default the current one) "
+        "into a new set name; 'create' adds an empty set name to unwrap from scratch (no seams, its UVs are the 3D "
+        "positions: cut and unfold it); 'rename' renames "
+        "source (default the current set) to name; 'delete' removes the set name (never the current or the "
+        "last one); 'set_current' makes name the set the other tools work on. Every action except list is one "
+        "undo step. Returns the sets after the action, the current one, and the texture assigned to each."),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False,
+                                    open_world_hint=False))
+    @_guard
+    async def uv_sets(
+            action: Annotated[Literal["list", "duplicate", "create", "rename", "delete", "set_current"], Field(
+                description="What to do; list changes nothing.")] = "list",
+            name: Annotated[str | None, Field(
+                description="The set created, renamed to, deleted or made current.")] = None,
+            source: Annotated[str | None, Field(
+                description="duplicate and rename: the set to start from (default: the current set).")] = None,
+            ctx: Context = None) -> dict[str, Any]:
+        session, progress = session_of(ctx), _reporter(ctx)
+        await session.ensure(progress)
+        if action == "list":
+            return await _uv_sets_state(session, progress)
+        if not name or not name.strip():
+            raise ToolError("uv_sets %s needs a name." % action)
+        name = name.strip()
+        before = await _uv_sets_state(session, progress)
+        known = [s["name"] for s in before["uv_sets"]]
+        if action in ("duplicate", "create") and name in known:
+            raise ToolError("A UV set named %r exists already. UV sets: %s." % (name, ", ".join(known)))
+        if action in ("delete", "set_current") and name not in known:
+            raise ToolError("%r is not a UV set of this scene. UV sets: %s." % (name, ", ".join(known)))
+        if source and action in ("duplicate", "rename") and source not in known:
+            raise ToolError("source %r is not a UV set of this scene. UV sets: %s." % (source, ", ".join(known)))
+        if action == "delete" and name == before["current"]:
+            raise ToolError("%r is the current UV set and cannot be deleted; make another set current first "
+                            "(action='set_current')." % name)
+        mode = {"duplicate": "Duplicate", "create": "Create", "rename": "Rename", "delete": "Delete",
+                "set_current": "SetCurrent"}[action]
+        params = {"Mode": mode, "Name": name}
+        if source and action in ("duplicate", "rename"):
+            params["Source"] = source
+        result = await session.execute("Uvset", params, label="UV sets", progress=progress)
+        if isinstance(result, dict) and "Error" in result:
+            err = result["Error"]
+            raise ToolError("RizomUV refused: %s" % (err.get("Msg", err) if isinstance(err, dict) else err))
+        if action == "set_current":
+            session.last_pack = None   # the last pack was of another layout
+        out = await _uv_sets_state(session, progress)
+        out["done"] = "%s %s" % (action, name)
+        return out
+
+    @mcp.tool(title="Transfer a texture", description=(
+        "Bake a texture from one UV set onto another UV set of the same mesh: the image painted on "
+        "source_uv_set is resampled onto the layout of dest_uv_set and written to output_file (format from the "
+        "extension: .png, .tga, .jpg, .bmp, .tif). Use it after re-unwrapping a mesh that already has textures. "
+        "source_uv_set defaults to the current UV set and source_file to the texture already assigned to that "
+        "set; dest_uv_set must be another set (make one with uv_sets action='duplicate' before "
+        "changing its UVs). Set normal_map=true for a tangent-space normal map. output_file must be "
+        "absolute and new unless overwrite=true. The scene is not changed. extra_params are merged into "
+        "RizomUV's TextureTransfer parameters (Samples, Padding, ColorSpace, Maps for a texture set...)."),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
+                                    open_world_hint=False))
+    @_guard
+    async def transfer_texture(
+            dest_uv_set: Annotated[str, Field(description="The UV set the new image is made for.")],
+            output_file: Annotated[str, Field(description="Absolute path of the image to write.")],
+            source_uv_set: Annotated[str | None, Field(
+                description="The UV set the source image is painted on (default: the current set).")] = None,
+            source_file: Annotated[str | None, Field(
+                description="Absolute path of the source image (default: the texture of source_uv_set).")] = None,
+            normal_map: Annotated[bool, Field(description="The image is a tangent-space normal map.")] = False,
+            size_px: Annotated[int | None, Field(
+                description="Width and height of the output image (default: the source image's size).",
+                ge=16, le=16384)] = None,
+            overwrite: Annotated[bool, Field(description="Allow replacing an existing file.")] = False,
+            extra_params: Annotated[dict[str, Any] | None, Field(
+                description="More TextureTransfer parameters, merged over these.")] = None,
+            ctx: Context = None) -> dict[str, Any]:
+        out_path = _absolute(output_file, "output_file")
+        if out_path.exists() and not overwrite:
+            raise ToolError("%s already exists. Pass overwrite=true to replace it (ask the artist first if it is "
+                            "theirs)." % out_path)
+        if not out_path.parent.is_dir():
+            raise ToolError("The folder %s does not exist." % out_path.parent)
+        session, progress = session_of(ctx), _reporter(ctx)
+        await session.ensure(progress)
+        sets = await session.execute("ItemNames", "Lib.UVSets", label="UV sets", progress=progress)
+        sets = [str(s) for s in sets] if isinstance(sets, list) else []
+        source = source_uv_set or await session.execute("Get", "Lib.CurrentUVSetName", label="UV sets",
+                                                        progress=progress)
+        for name, what in ((source, "source_uv_set"), (dest_uv_set, "dest_uv_set")):
+            if sets and name not in sets:
+                raise ToolError("%s %r is not a UV set of this scene. Its UV sets: %s." % (what, name, ", ".join(sets)))
+        if source == dest_uv_set:
+            raise ToolError("source_uv_set and dest_uv_set are both %r: a transfer goes from one UV set to "
+                            "another. UV sets of this scene: %s." % (source, ", ".join(sets)))
+        if source_file:
+            src_path = _absolute(source_file, "source_file")
+        else:
+            assigned = await session.execute("Get", "Lib.UVSets.%s.RootGroup.Properties.Texture" % source,
+                                             label="UV sets", progress=progress)
+            if not isinstance(assigned, str) or not assigned.strip():
+                raise ToolError("The UV set %r has no texture assigned; give source_file." % source)
+            src_path = Path(assigned)
+        if not src_path.is_file():
+            raise ToolError("No such file: %s" % src_path)
+        if src_path.resolve() == out_path.resolve():
+            raise ToolError("output_file is the source image; write the result to another file.")
+        params = {"SourceUVSet": source, "DestUVSet": dest_uv_set, "SourceFile": src_path.as_posix(),
+                  "OutputFile": out_path.as_posix(), "NormalMap": bool(normal_map)}
+        if size_px:
+            params.update(Width=size_px, Height=size_px)
+        params = _deep_merge(params, extra_params or {})
+        before = out_path.stat().st_mtime_ns if out_path.exists() else None
+        t0 = time.perf_counter()
+        result = await session.execute("TextureTransfer", params, label="Texture transfer", progress=progress,
+                                       timeout_ms=600000)
+        seconds = round(time.perf_counter() - t0, 2)
+        if isinstance(result, dict) and "Error" in result:
+            err = result["Error"]
+            raise ToolError("RizomUV could not transfer the texture: %s" % (
+                err.get("Msg", err) if isinstance(err, dict) else err))
+        if "Maps" not in params and (not out_path.is_file() or
+                                     (before is not None and out_path.stat().st_mtime_ns == before)):
+            raise ToolError("RizomUV did not write %s (a demo licence silently skips it)." % out_path)
+        report = result.get("TextureTransfer") if isinstance(result, dict) else None
+        out = {"output_file": str(out_path), "source_file": str(src_path), "source_uv_set": source,
+               "dest_uv_set": dest_uv_set, "seconds": seconds}
+        if isinstance(report, dict):
+            keep = ("Width", "Height", "BitDepth", "NormalMap", "Coverage", "Device", "Maps")
+            out.update({k.lower() if k != "NormalMap" else "normal_map": report[k] for k in keep if k in report})
+        out["note"] = ("The image is written; the scene is unchanged. In RizomUV it becomes visible once loaded "
+                       "as the texture of %s." % dest_uv_set)
+        return out
+
     @mcp.tool(title="Undo", description=(
         "Undo the last RizomUV steps (default 1). Each unfold, pack or other scene-changing call is one step; "
         "load, save, measure, diagnose and render_layout are not on the undo stack. On the artist's own "

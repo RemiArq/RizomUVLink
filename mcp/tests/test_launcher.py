@@ -36,7 +36,7 @@ REPO_ROOT = MCP_DIR.parents[2]
 BOOT = MCP_DIR / "boot.py"
 
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose",
-                  "render_layout", "save", "undo", "run_command"}
+                  "render_layout", "save", "undo", "run_command", "transfer_texture", "uv_sets"}
 
 DETACHED_PROCESS = 0x00000008
 CREATE_NO_WINDOW = 0x08000000

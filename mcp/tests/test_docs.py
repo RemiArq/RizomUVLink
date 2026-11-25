@@ -90,7 +90,7 @@ def shipped():
 def test_shipped_module(shipped):
     assert shipped.name == "RizomUVLinkBase.py"
     parsed = docs.parse_module_file(shipped)
-    assert len(parsed) == 66
+    assert len(parsed) == 67
     assert not docs.SKELETON & set(parsed)
     for name in ("Load", "Unfold", "Pack", "Save", "Get", "Undo", "Quit", "Weld"):
         assert name in parsed

@@ -18,7 +18,7 @@ def shipped_commands():
 
 
 def test_every_shipped_command_is_classified(shipped_commands):
-    assert len(shipped_commands) == 66
+    assert len(shipped_commands) == 67
     missing = [c for c in shipped_commands if policy.rule_info(c) is None]
     assert not missing, f"commands without a policy: {missing}"
     stale = sorted(set(policy.classified()) - set(shipped_commands))
@@ -53,7 +53,8 @@ def test_reads_scene_and_undo_are_allowed_everywhere(name):
 
 
 @pytest.mark.parametrize("name,tool", [("Load", "load tool"), ("Save", "save tool"),
-                                       ("RasterExport", "render_layout")])
+                                       ("RasterExport", "render_layout"),
+                                       ("TextureTransfer", "transfer_texture tool")])
 def test_attached_denials_name_the_dedicated_tool(name, tool):
     allowed, reason = policy.check(name, {}, ATTACHED)
     assert not allowed and tool in reason

@@ -4306,6 +4306,131 @@ class CRizomUVLinkBase:
 		"""
 		return self.Execute('Test', params)
 
+	def TextureTransfer(self, params = {}):
+		"""
+		Transfer a texture painted on one UV set onto the layout of another UV set
+		
+		For every texel of the output image, the task finds the polygon of the destination UV set under it,
+		the same point on the same polygon in the source UV set, and reads the source image there. Both sets
+		must hold the same polygons, which is always the case for the sets of one mesh.
+		
+		IslandAware
+		Padding
+		
+		NormalMap
+		
+		Remark: The source image is read with its own repeat: a UV beyond 0..1 reads the texture again, as
+		        the viewport shows it. The destination image covers the one UV tile named by DestTileU and
+		        DestTileV.
+		
+		PARAMETER       : SourceFile
+		Brief           : The image to transfer: PNG, JPEG, TGA or BMP (8 or 16 bits per channel), or TIFF where the build has it. Required unless Maps is given
+		Type            : string
+		
+		PARAMETER       : OutputFile
+		Brief           : The image written. Its extension gives its format: png, tga, bmp, jpg or tif. Required unless Maps is given
+		Type            : string
+		
+		PARAMETER       : Maps
+		Brief           : A texture set: several images transferred in one call, the same way, in the order given. A table of tables keyed by a name of your choice, {"Albedo": {...}, "Normal": {...}}; each entry is a table {SourceFile, OutputFile} and may also give NormalMap, NormalMapGreen, ColorSpace, BitDepth, Width, Height and BackgroundColor; what an entry does not give is taken from the members of the task. When Maps is given, SourceFile and OutputFile are not read
+		Type            : table
+		
+		Remark: Every entry is checked before the first image is written (formats, depths, two maps written
+		        to one file, a file both read and written). A map that fails once the work has started
+		        leaves the maps before it written. The report then holds one report per map under Maps.
+		
+		
+		PARAMETER       : SourceUVSet
+		Brief           : The UV set the source image is painted on
+		Type            : string
+		Required        : yes
+		
+		PARAMETER       : DestUVSet
+		Brief           : The UV set the output image is made for
+		Type            : string
+		Required        : yes
+		
+		PARAMETER       : Width
+		Brief           : Width of the output image in pixels. 0: the width of the source image. PNG, TGA, BMP and JPEG hold 2 GB uncompressed at most (about 23000 x 23000 RGBA at 8 bits, 16000 at 16)
+		Type            : int
+		Default         : 0
+		
+		PARAMETER       : Height
+		Brief           : Height of the output image in pixels. 0: the height of the source image
+		Type            : int
+		Default         : 0
+		
+		PARAMETER       : Samples
+		Brief           : Points read per output pixel along each axis: 3 averages 3 x 3 points. 1 to 16
+		Type            : int
+		Default         : 3
+		
+		PARAMETER       : IslandAware
+		Brief           : A point reads only the texels of its own source island: the background and the other islands around it do not bleed in
+		Type            : bool
+		Default         : true
+		
+		PARAMETER       : Padding
+		Brief           : Pixels by which the destination islands are extended, so that the mip-maps of the output do not bring the background into the islands
+		Type            : int
+		Default         : 16
+		
+		PARAMETER       : ColorSpace
+		Brief           : How the pixel values are averaged. sRGB: a color image, averaged as light. Linear: data (roughness, masks, heights), averaged as stored. A normal map is always linear
+		Type            : string
+		Default         : "sRGB"
+		Possible Values :
+		                 - "sRGB"
+		                 - "Linear"
+		
+		PARAMETER       : NormalMap
+		Brief           : The image is a tangent-space normal map: each normal is turned from the tangent frame of the source UV set into the one of the destination set
+		Type            : bool
+		Default         : false
+		
+		PARAMETER       : NormalMapGreen
+		Brief           : Where the green channel of the normal map points. Up: OpenGL, Blender, Maya, Substance default. Down: DirectX, Unreal
+		Type            : string
+		Default         : "Up"
+		Possible Values :
+		                 - "Up"
+		                 - "Down"
+		
+		PARAMETER       : BitDepth
+		Brief           : Bits per channel of the output: 8 or 16 (PNG and TIFF only). 0: the depth of the source image
+		Type            : int
+		Default         : 0
+		
+		PARAMETER       : BackgroundColor
+		Brief           : Color of the pixels no island covers, between 0 and 1. When it is not given: black, or the flat normal (0.5, 0.5, 1) for a normal map. With an alpha channel, these pixels are transparent
+		Type            : vector3d
+		
+		PARAMETER       : SourceTiling
+		Brief           : How many times the source image repeats per UV unit, along U and V. When it is not given: the texture repeat of the source UV set (RootGroup.Properties.Tiling), else 1
+		Type            : vector2d
+		
+		PARAMETER       : SourceOffset
+		Brief           : Added to the source texture coordinates after the repeat. When it is not given: 0
+		Type            : vector2d
+		
+		PARAMETER       : DestTileU
+		Brief           : The UV tile the output image covers, along U: the image spans U = DestTileU to DestTileU + 1 (in tiles of DestTileSize)
+		Type            : int
+		Default         : 0
+		
+		PARAMETER       : DestTileV
+		Brief           : The UV tile the output image covers, along V
+		Type            : int
+		Default         : 0
+		
+		PARAMETER       : DestTileSize
+		Brief           : The size of the UV tile the output image covers, along U and V: the image spans U = DestTileU x size to (DestTileU + 1) x size. When it is not given: 1, 1
+		Type            : vector2d
+		
+		
+		"""
+		return self.Execute('TextureTransfer', params)
+
 	def ToolbarLayout(self, params = {}):
 		"""
 		Export the whole top toolbar to a file, or import one: {"Action": "Export"|"Import", "Path": "<file>"}. The file describes the bar alone - which sections are on it, what each carries and in which order, the row count, the labels and the handles - so importing one moves no panel. Use it to hand a standard toolbar to a team. UILayout is the separate thing that moves windows.
