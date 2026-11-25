@@ -12,6 +12,7 @@ No `from __future__ import annotations` here: pydantic reads the tool signatures
 """
 import base64
 import functools
+import difflib
 import itertools
 import json
 import logging
@@ -58,8 +59,8 @@ Measured on a 2,573-island hard-surface scene — read before changing parameter
 (axis-aligned islands meet flat edge to flat edge; rotated ones leave wedges).
 • MaxMutations is deliberately not exposed: above a few hundred islands it burns minutes for no gain.
 Pack takes ~10–25 s on 2.5k islands. One call = one undo step.
-extra_params are deep-merged into RizomUV's Pack parameters (rizomuv://command/Pack documents them); \
-the measured guidance is in rizomuv://guide/packing."""
+extra_params are deep-merged into RizomUV's Pack parameters (command_help('Pack') documents them); \
+the measured guidance is command_help('guide:packing')."""
 
 MEASURE_LINES = """\
 • coverage — share of the 0–1 tile covered by islands, rasterized at map_resolution (pixel centres); \
@@ -372,7 +373,7 @@ def build_server(config) -> MCPServer:
     @mcp.tool(title="Unfold", description=(
         "Unfold (flatten) the UV islands of the working set to minimize distortion; seams are not changed. "
         "working_set is RizomUV's WorkingSet ('Visible' by default, 'Selected' for the selection). extra_params "
-        "are merged into RizomUV's Unfold parameters (see rizomuv://command/Unfold). Returns the islands whose "
+        "are merged into RizomUV's Unfold parameters (see command_help('Unfold')). Returns the islands whose "
         "unfold is not bijective (they overlap themselves: cut them) and the time. One call = one undo step."),
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
                                     open_world_hint=False))
@@ -705,8 +706,8 @@ def build_server(config) -> MCPServer:
         return out
 
     @mcp.tool(title="Run a RizomUV command", description=(
-        "Run another RizomUV command through RizomUVLink (rizomuv://commands lists them, "
-        "rizomuv://command/<name> documents each). Prefer the dedicated tools, which carry guardrails. A policy "
+        "Run another RizomUV command through RizomUVLink (command_help lists them and documents each, "
+        "parameters included: read it before the first call of a command). Prefer the dedicated tools, which carry guardrails. A policy "
         "decides what passes: on the artist's RizomUV only reads, undoable scene edits and undo; on a private "
         "headless instance also loading, saving, exporting and setting session values. Never Quit/Exit, "
         "preferences, or Get('Lib') / Get('Lib.Mesh') (they crash RizomUV or cannot be serialized). params is "
@@ -791,6 +792,44 @@ def build_server(config) -> MCPServer:
                                           "allowed_headless": False,
                                           "note": "not classified by this server, so not passed through"}
 
+    @mcp.tool(title="RizomUV command help", description=(
+        "The documentation of RizomUV's own commands, for run_command. Without name: every command with a "
+        "one-line summary and whether run_command passes it on the artist's RizomUV and on a private headless "
+        "one. With name: that command's full documentation, its parameters and their defaults. "
+        "name='guide:packing' gives the measured packing guide. Never starts RizomUV; once connected the "
+        "documentation is the running version's."),
+        annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False))
+    @_guard
+    async def command_help(
+            name: Annotated[str | None, Field(
+                description="A command name (e.g. Cut, Select, IslandGroups), or 'guide:packing'.")] = None,
+            ctx: Context = None) -> dict[str, Any]:
+        if name and name.strip().lower() in ("guide:packing", "guide/packing", "packing guide"):
+            return {"guide": "packing", "text": GUIDE_PACKING}
+        table, source = await docs_table()
+        if not name or not name.strip():
+            commands = []
+            for cmd in sorted(table):
+                rule = rule_of(cmd)
+                if not (rule["allowed_attached"] or rule["allowed_headless"]):
+                    continue
+                commands.append({"name": cmd, "summary": docs.summary_line(table[cmd], 120),
+                                 "artist_instance": rule["allowed_attached"], "headless": rule["allowed_headless"]})
+            return {"commands": commands, "guides": ["guide:packing"], "source": source,
+                    "note": ("Only the commands run_command passes are listed. Prefer the dedicated tools (load, "
+                             "unfold, pack, save, uv_sets, transfer_texture...) where one exists.")}
+        cmd = name.strip()
+        if cmd not in table:
+            folded = {n.lower(): n for n in table}.get(cmd.lower())
+            close = folded or next(iter(difflib.get_close_matches(cmd, list(table), n=1, cutoff=0.6)), None)
+            raise ToolError("Unknown RizomUV command %r.%s Call command_help without name to list them."
+                            % (cmd, " Did you mean %r?" % close if close else ""))
+        rule = rule_of(cmd)
+        return {"name": cmd, "doc": table[cmd] or "(no documentation)",
+                "run_command": {"artist_instance": rule["allowed_attached"], "headless": rule["allowed_headless"],
+                                "category": rule["category"], "note": rule["note"]},
+                "source": source}
+
     @mcp.resource("rizomuv://commands", name="commands", title="RizomUV commands", mime_type="application/json",
                   description="Every RizomUV command: category, whether run_command passes it on the artist's "
                               "instance and on a headless one, and a one-line summary.")
@@ -812,7 +851,7 @@ def build_server(config) -> MCPServer:
         table, source = await docs_table()
         if name not in table:
             folded = {n.lower(): n for n in table}.get(name.lower())
-            hint = " Did you mean '%s'?" % folded if folded else " rizomuv://commands lists them."
+            hint = " Did you mean '%s'?" % folded if folded else " command_help lists them."
             raise ResourceNotFoundError("Unknown RizomUV command '%s'.%s" % (name, hint))
         rule = rule_of(name)
         allowed = {True: "yes", False: "no"}

@@ -80,7 +80,7 @@ def test_always_denied(name):
 
 def test_denial_texts():
     assert "lifecycle" in policy.check("Quit", {}, HEADLESS)[1]
-    assert "rizomuv://command" in policy.check("GenerateScriptingHelp", {}, ATTACHED)[1]
+    assert "command_help" in policy.check("GenerateScriptingHelp", {}, ATTACHED)[1]
 
 
 @pytest.mark.parametrize("path", ["Lib", "Lib.Mesh", "Lib.Scene", "", "  Lib.Mesh. "])

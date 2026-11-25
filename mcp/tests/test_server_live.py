@@ -16,7 +16,7 @@ from rizomuv_mcp.config import Config
 from rizomuv_mcp.server import build_server
 
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose", "render_layout",
-                  "save", "undo", "run_command", "transfer_texture", "uv_sets"}
+                  "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help"}
 
 
 def text(result):
@@ -329,3 +329,25 @@ def test_uv_sets(snap_exe, isolated_dirs, example_mesh):
             r = await call(c, "uv_sets", {"action": "set_current", "name": "Nope"})
             assert r.is_error and "UV sets: Default, Fresh" in text(r)
     anyio.run(go)
+
+def test_command_help_needs_no_rizomuv(isolated_dirs):
+    async def go():
+        async with Client(build_server(Config(instance="headless")), mode="legacy") as c:
+            listing = data(await c.call_tool("command_help", {}))
+            names = {i["name"] for i in listing["commands"]}
+            assert {"Cut", "Select", "Uvset", "TextureTransfer"} <= names and "Quit" not in names
+            cut = next(i for i in listing["commands"] if i["name"] == "Cut")
+            assert cut["artist_instance"] is True and cut["summary"]
+            doc = data(await c.call_tool("command_help", {"name": "Cut"}))
+            assert "PARAMETER" in doc["doc"] and doc["run_command"]["artist_instance"] is True
+            tt = data(await c.call_tool("command_help", {"name": "TextureTransfer"}))
+            assert tt["run_command"] == {"artist_instance": False, "headless": True, "category": "save_export",
+                                         "note": tt["run_command"]["note"]} and "transfer_texture" in tt["run_command"]["note"]
+            r = await c.call_tool("command_help", {"name": "cut"})
+            assert r.is_error and "Did you mean 'Cut'" in text(r)
+            guide = data(await c.call_tool("command_help", {"name": "guide:packing"}))
+            assert "map_resolution dominates" in guide["text"]
+            info = data(await c.call_tool("session_info", {}))
+            assert info["connected"] is False
+    anyio.run(go)
+

@@ -164,8 +164,7 @@ _add("GraphEditor", "scene", True, True, guard=_graph_editor_guard)
 _add("SpaceMouse", "internal", False, False,
      "SpaceMouse reports and simulates a 3Dconnexion device; not driven from here.")
 _add("GeneratePythonLinkModule", "internal", False, False,
-     "GeneratePythonLinkModule writes the client module to a file; read the rizomuv://command/<name> "
-     "resources instead.")
+     "GeneratePythonLinkModule writes the client module to a file; call command_help instead.")
 
 _add("UiLayout", "prefs_ui", False, False, "UiLayout rearranges RizomUV's windows; not driven from here.")
 _add("ToolbarLayout", "prefs_ui", False, False,
@@ -181,13 +180,11 @@ _add("Test", "internal", False, False, "Test runs RizomUV's internal code tests.
 _add("InitLib", "internal", False, False, "InitLib re-initialises the library, undo history included.")
 _add("LibTaskUpdate LibTaskEnd Loop", "internal", False, False, "Internal plumbing of RizomUV.")
 _add("GenPythonModule", "internal", False, False,
-     "GenPythonModule writes the client module to a file; read the rizomuv://command/<name> "
-     "resources instead.")
+     "GenPythonModule writes the client module to a file; call command_help instead.")
 _add("GenerateHelp", "internal", False, False,
-     "GenerateHelp writes the HTML help to disk; read the rizomuv://command/<name> resources instead.")
+     "GenerateHelp writes the HTML help to disk; call command_help instead.")
 _add("GenerateScriptingHelp", "internal", False, False,
-     "GenerateScriptingHelp returns nothing over the link; read the rizomuv://command/<name> "
-     "resources instead.")
+     "GenerateScriptingHelp returns nothing over the link; call command_help instead.")
 _add("Subscribe", "internal", False, False,
      "Subscribe replaces the change-notification watch list for every client and binds a second "
      "port; not driven from here.")
