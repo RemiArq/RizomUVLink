@@ -441,7 +441,7 @@ def build_server(config) -> MCPServer:
             "the one this server is set up with; it takes from a few seconds to a few minutes on large meshes. "
             "Returns what the graph did, then measures the layout (as measure does) unless measure=false. "
             "Needs a mesh loaded, and a RizomUV with the node graph turned on."),
-            annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+            annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False,
                                         open_world_hint=False))
         @_guard
         async def auto_seams(
@@ -457,6 +457,11 @@ def build_server(config) -> MCPServer:
                 raise ToolError("The graph this server is set up with is not JSON (%s): %s" % (graph_path, e))
             session, progress = session_of(ctx), _reporter(ctx)
             if not await session.graph_enabled(progress):
+                if session.owned:
+                    raise ToolError(
+                        "The node graph is off in the headless RizomUV this server started: the build has no "
+                        "Prefs.Experimental.Graph (it is older than the switch), or turning it on failed (see the "
+                        "server log). Point the server at a newer RizomUV, or use unfold and pack.")
                 raise ToolError(
                     "The node graph is off in this RizomUV. It is turned on by the preference "
                     "Prefs.Experimental.Graph, read when RizomUV starts: the artist sets it to true (for instance "
@@ -466,8 +471,15 @@ def build_server(config) -> MCPServer:
             if not scene.get("has_mesh"):
                 raise ToolError("No mesh is loaded: call load first.")
             t0 = time.perf_counter()
-            result = await session.execute("Graph", {"Graph": text}, label="Automatic seams", progress=progress,
-                                           timeout_ms=1800000)
+            try:
+                result = await session.execute("Graph", {"Graph": text}, label="Automatic seams",
+                                               progress=progress, timeout_ms=1800000)
+            except ToolError as e:
+                # the Graph task gives the mesh back as it was when a node fails; a lost link is
+                # another matter, and its message already says what is known
+                if "link" in str(e).lower():
+                    raise
+                raise ToolError("The graph failed and the mesh is as it was: %s" % e) from None
             seconds = round(time.perf_counter() - t0, 2)
             if isinstance(result, dict) and "Error" in result:
                 err = result["Error"]
@@ -477,7 +489,7 @@ def build_server(config) -> MCPServer:
             session.last_pack = None
             out = {"graph": graph_path.name, "seconds": seconds,
                    "nodes_run": len(report.get("Executed") or []),
-                   "nodes_in_graph": len(doc.get("Nodes") or {}) if isinstance(doc, dict) else None}
+                   "nodes_skipped": len(report.get("Skipped") or [])}
             if isinstance(report.get("Coverage"), dict):
                 cov = report["Coverage"]
                 out["coverage_of_the_mesh"] = {k: cov[k] for k in ("Ratio", "UncoveredParts") if k in cov}

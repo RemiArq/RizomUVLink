@@ -96,5 +96,7 @@ def parse(argv=None, env=None):
     level, src = pick(args.log_level, "LOG_LEVEL")
     level = _choice(level.upper(), LOG_LEVELS, src) if level else "INFO"
     graph, _ = pick(args.graph, "GRAPH")
+    # the client decides the server's working directory: a relative path or ~ is made absolute now
+    graph = os.path.abspath(os.path.expanduser(graph)) if graph else None
     return Config(instance=instance, port=port, exe=exe, launch_timeout=timeout, log_level=level,
                   graph=graph, link_worker=args.link_worker)
