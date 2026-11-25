@@ -152,7 +152,9 @@ Pack takes ~10–25 s on 2.5k islands (1024: ~10 s, 2048: ~18–20 s, padding 0:
 3. render_layout to see why — never to rank two layouts: the eye ranks them badly.
 """
 
-CANONICAL_PACK = {"RootGroup": "RootGroup", "WorkingSet": "Visible", "Translate": True, "Scaling": {"Mode": 2},
+# AuxGroup: an island outside every tile is taken into the root group and packed with it, as the
+# Pack button does; without it such an island stays where it is.
+CANONICAL_PACK = {"RootGroup": "RootGroup", "AuxGroup": "RootGroup", "WorkingSet": "Visible", "Translate": True, "Scaling": {"Mode": 2},
                   "LayoutScalingMode": 2, "RecursionDepth": 1, "ProcessTileSelection": False,
                   "UsePixelUnit": True}
 

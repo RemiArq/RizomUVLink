@@ -15,7 +15,7 @@ from rizomuv_mcp import docs, launch, session
 pytestmark = pytest.mark.live
 
 VERSION = re.compile(r"^\d{4}\.\d+\.\d+")
-CANONICAL_PACK = {"RootGroup": "RootGroup", "WorkingSet": "Visible", "Translate": True, "Scaling": {"Mode": 2},
+CANONICAL_PACK = {"RootGroup": "RootGroup", "AuxGroup": "RootGroup", "WorkingSet": "Visible", "Translate": True, "Scaling": {"Mode": 2},
                   "LayoutScalingMode": 2, "RecursionDepth": 1, "ProcessTileSelection": False,
                   "UsePixelUnit": True, "PaddingSizePx": 2, "MapResolution": 1024,
                   "Rotate": {"Initial": "Auto", "Min": 0.0, "Max": 360.0, "Step": 90.0}}
