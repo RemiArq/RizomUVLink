@@ -404,7 +404,7 @@ class Session:
         self._set_connected("headless" if owned else "attached", owned=owned, port=port, pid=pid, info=info,
                             record=record, lock=lock, exe=record.exe if record else None)
 
-    async def _launch_locked(self, progress):
+    async def _launch_locked(self, progress, graph_retry=True):
         try:
             exe, source = await asyncio.to_thread(launch.find_rizomuv_exe, self.config.exe)
             if progress is not None:
@@ -450,6 +450,36 @@ class Session:
                  time.monotonic() - t0, inst.pid, inst.port)
         self._set_connected("headless", owned=True, inst=inst, port=inst.port, pid=inst.pid, info=info,
                             exe="%s (%s)" % (exe, source))
+        if self.config.graph and graph_retry and not await self._graph_on():
+            # The node graph exists only when Prefs.Experimental.Graph was on at launch. The
+            # instance is ours, with a user dir of its own: turn it on there and start again,
+            # once; the preference stays for the next launches.
+            await self._link_execute("Set", {"Path": "Prefs.Experimental.Graph", "Value": True})
+            await self._link_execute("SavePreferences", {})
+            log.info("node graph turned on in the headless user dir; restarting the instance")
+            await self._quit_owned(timeout=5.0)
+            await self._reset_locked()
+            await self._launch_locked(progress, graph_retry=False)
+
+    async def _link_execute(self, command, params, timeout=30.0):
+        """A command on the connected instance from inside the lock (call() takes it)."""
+        resp = await self.worker.request("execute", {"command": command, "params": params,
+                                                     "timeout_ms": int(timeout * 1000)}, timeout=timeout + 5)
+        if not resp["ok"]:
+            raise ToolError("%s failed: %s" % (command, resp["error"]["message"]))
+        return resp["result"]["value"]
+
+    async def _graph_on(self):
+        try:
+            return bool(await self._link_execute("Get", "Vars.Infos.Experimental.Graph"))
+        except ToolError:
+            return False   # a build from before the switch: no such variable, and no graph either
+
+    async def graph_enabled(self, progress=None):
+        """Whether the connected RizomUV has the node graph (Prefs.Experimental.Graph at launch)."""
+        await self.ensure(progress)
+        async with self._lock:
+            return await self._graph_on()
 
     def _set_connected(self, mode, *, owned, port, pid, info, inst=None, record=None, lock=None, exe=None):
         self._gen += 1

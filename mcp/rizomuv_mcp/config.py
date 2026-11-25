@@ -18,6 +18,7 @@ class Config:
     exe: str | None = None          # the rizomuv executable of headless launches (None: resolved)
     launch_timeout: float = 180.0   # seconds a headless launch may take to answer
     log_level: str = "INFO"
+    graph: str | None = None        # the node graph auto_seams runs (None: no auto_seams tool)
     link_worker: bool = False       # internal: this process is the link worker
 
 
@@ -64,6 +65,8 @@ def build_parser():
     parser.add_argument("--exe", help="RizomUV executable for headless launches [env RIZOMUV_EXE]")
     parser.add_argument("--launch-timeout", help="seconds a headless launch may take to answer "
                                                  "(default 180) [env RIZOMUV_MCP_LAUNCH_TIMEOUT]")
+    parser.add_argument("--graph", help="node graph file (.rzgraph.json) the auto_seams tool runs; without it "
+                                        "the tool is not offered [env RIZOMUV_MCP_GRAPH]")
     parser.add_argument("--log-level", type=str.upper, choices=LOG_LEVELS,
                         help="stderr logging level (default INFO) [env RIZOMUV_MCP_LOG_LEVEL]")
     parser.add_argument("--link-worker", action="store_true", help=argparse.SUPPRESS)
@@ -92,5 +95,6 @@ def parse(argv=None, env=None):
     timeout = _timeout(timeout, src) if timeout is not None else 180.0
     level, src = pick(args.log_level, "LOG_LEVEL")
     level = _choice(level.upper(), LOG_LEVELS, src) if level else "INFO"
+    graph, _ = pick(args.graph, "GRAPH")
     return Config(instance=instance, port=port, exe=exe, launch_timeout=timeout, log_level=level,
-                  link_worker=args.link_worker)
+                  graph=graph, link_worker=args.link_worker)

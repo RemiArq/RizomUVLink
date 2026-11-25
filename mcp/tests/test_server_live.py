@@ -351,3 +351,39 @@ def test_command_help_needs_no_rizomuv(isolated_dirs):
             assert info["connected"] is False
     anyio.run(go)
 
+def test_auto_seams_is_offered_only_with_a_graph(isolated_dirs, tmp_path):
+    async def go():
+        async with Client(build_server(Config(instance="headless")), mode="legacy") as c:
+            assert "auto_seams" not in {t.name for t in (await c.list_tools()).tools}
+        async with Client(build_server(Config(instance="headless", graph=str(tmp_path / "g.json"))),
+                          mode="legacy") as c:
+            assert "auto_seams" in {t.name for t in (await c.list_tools()).tools}
+    anyio.run(go)
+
+
+@pytest.mark.live
+def test_auto_seams_runs_the_graph_it_is_set_up_with(snap_exe, isolated_dirs, example_mesh, tmp_path):
+    """The headless instance starts with the node graph off (a fresh user dir): the server turns it
+    on and restarts it, then runs the graph file of its configuration."""
+    graph = tmp_path / "planar.rzgraph.json"
+    graph.write_text(json.dumps({
+        "Version": 1,
+        "Nodes": {"classify": {"Type": "ClassifyPlanar", "Params": {"AngleTolerance": 5.0}},
+                  "project": {"Type": "Project", "Params": {"Algorithm": "Planar"}}},
+        "Links": [["classify.Mesh", "project.Mesh"], ["classify.Planar", "project.Regions"]],
+        "Output": "project.Mesh"}), encoding="utf-8")
+
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe), graph=str(graph))),
+                          mode="legacy") as c:
+            r = await call(c, "auto_seams", {})
+            assert r.is_error and "load first" in text(r)
+            data(await call(c, "load", {"path": str(example_mesh)}))
+            res = data(await call(c, "auto_seams", {}))
+            assert res["graph"] == graph.name and res["nodes_run"] == 2
+            assert res["measure"]["islands"] == res["scene"]["islands"] > 0
+            graph.write_text("not json", encoding="utf-8")
+            r = await call(c, "auto_seams", {})
+            assert r.is_error and "is not JSON" in text(r)
+    anyio.run(go)
+

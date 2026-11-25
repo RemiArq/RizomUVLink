@@ -434,6 +434,68 @@ def build_server(config) -> MCPServer:
                 out["measure_error"] = str(e)
         return out
 
+    if config.graph:
+        @mcp.tool(title="Automatic seams", description=(
+            "Unwrap the whole visible mesh automatically: RizomUV's node graph cuts the seams, unfolds and "
+            "packs, in one call and one undo step. It replaces the UVs and seams the mesh has. The graph is "
+            "the one this server is set up with; it takes from a few seconds to a few minutes on large meshes. "
+            "Returns what the graph did, then measures the layout (as measure does) unless measure=false. "
+            "Needs a mesh loaded, and a RizomUV with the node graph turned on."),
+            annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                                        open_world_hint=False))
+        @_guard
+        async def auto_seams(
+                measure: Annotated[bool, Field(description="Measure the result (about 0.5 s).")] = True,
+                ctx: Context = None) -> dict[str, Any]:
+            graph_path = Path(config.graph)
+            try:
+                text = graph_path.read_text(encoding="utf-8")
+                doc = json.loads(text)
+            except OSError as e:
+                raise ToolError("The graph this server is set up with cannot be read (%s): %s" % (graph_path, e))
+            except ValueError as e:
+                raise ToolError("The graph this server is set up with is not JSON (%s): %s" % (graph_path, e))
+            session, progress = session_of(ctx), _reporter(ctx)
+            if not await session.graph_enabled(progress):
+                raise ToolError(
+                    "The node graph is off in this RizomUV. It is turned on by the preference "
+                    "Prefs.Experimental.Graph, read when RizomUV starts: the artist sets it to true (for instance "
+                    "Set {Path: Prefs.Experimental.Graph, Value: true} then SavePreferences, in the script editor) "
+                    "and restarts RizomUV.")
+            scene = await session.scene(progress)
+            if not scene.get("has_mesh"):
+                raise ToolError("No mesh is loaded: call load first.")
+            t0 = time.perf_counter()
+            result = await session.execute("Graph", {"Graph": text}, label="Automatic seams", progress=progress,
+                                           timeout_ms=1800000)
+            seconds = round(time.perf_counter() - t0, 2)
+            if isinstance(result, dict) and "Error" in result:
+                err = result["Error"]
+                raise ToolError("The graph failed and the mesh is as it was: %s" % (
+                    err.get("Msg", err) if isinstance(err, dict) else err))
+            report = result if isinstance(result, dict) else {}
+            session.last_pack = None
+            out = {"graph": graph_path.name, "seconds": seconds,
+                   "nodes_run": len(report.get("Executed") or []),
+                   "nodes_in_graph": len(doc.get("Nodes") or {}) if isinstance(doc, dict) else None}
+            if isinstance(report.get("Coverage"), dict):
+                cov = report["Coverage"]
+                out["coverage_of_the_mesh"] = {k: cov[k] for k in ("Ratio", "UncoveredParts") if k in cov}
+            # The stages of a cascade warn about what they leave to the next stage (a region with
+            # flipped triangles goes down Rest): the measure below is the verdict on the result.
+            out["stage_warnings"] = len(report.get("Warnings") or [])
+            out["scene"] = await session.scene(progress)
+            if measure:
+                try:
+                    out["measure"] = await session.op("measure", {"res": 1024, "padding_px": None,
+                                                                  "attached": session.attached},
+                                                      label="Measuring", progress=progress)
+                except ToolError as e:
+                    out["measure_error"] = str(e)
+            if session.attached:
+                out["note"] = "Done in the artist's RizomUV: one undo reverts the whole graph."
+            return out
+
     # -------------------------------------------------------------- analysis
 
     @mcp.tool(title="Measure the layout", description=MEASURE_DESCRIPTION,

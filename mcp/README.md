@@ -56,6 +56,7 @@ the entry's `env`. `rizomuv-mcp --launcher-info` prints what it resolved (on std
 | `undo` | Undo the last steps. |
 | `uv_sets` | List the UV sets (the current one, the texture of each), and duplicate, create, rename, delete or make one current. |
 | `transfer_texture` | Bake a texture from one UV set onto another, after a new unwrap: the image is resampled onto the new layout. |
+| `auto_seams` | Cut, unfold and pack the whole mesh with RizomUV's node graph, in one undo step. Offered only when the server is given a graph file (`--graph` or `RIZOMUV_MCP_GRAPH`); it needs a RizomUV whose node graph is on (`Prefs.Experimental.Graph`). The file is read at each call, so the graph can be changed without restarting. |
 | `command_help` | The list of the commands `run_command` passes, and the full documentation of one. Starts nothing. |
 | `run_command` | Any other RizomUV command, behind a policy (see below). |
 
