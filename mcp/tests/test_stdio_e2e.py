@@ -21,7 +21,8 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="runs the app's 
 
 BOOT = Path(__file__).resolve().parents[1] / "boot.py"
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose", "render_layout",
-                  "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help"}
+                  "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help", "cut", "weld",
+                  "optimize", "validate", "texel_density"}
 
 
 @pytest.fixture

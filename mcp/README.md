@@ -48,7 +48,12 @@ the entry's `env`. `rizomuv-mcp --launcher-info` prints what it resolved (on std
 | `connect` | Choose or switch: the open RizomUV, a private headless one, or one port in particular. |
 | `load` | Load a mesh file with its UVs. Replaces the scene — refused on your own RizomUV unless you agreed. |
 | `unfold` | Flatten the islands of the working set. |
-| `pack` | Lay the islands into the 0–1 tile at a given resolution and padding, then measure the result. Islands outside every tile are packed too, as the Pack button does. |
+| `cut` | Cut seams along edges given as couples `[polygon, side]` (polygon = the n-th face of the file, side i = from vertex i to i + 1). One undo step. |
+| `weld` | Weld seams back along edges given the same way. One undo step. |
+| `optimize` | Relax the islands without changing their seams. One undo step. |
+| `validate` | Check the UVs as the UV Validator does (overlaps, flips, padding, margin, coverage, stretch, texel density...) and give the verdict. Read only. |
+| `texel_density` | Read the texel density, or set it on the islands (per island or uniformly). One undo step; pack afterwards with `keep_scale`. |
+| `pack` | Lay the islands into the 0–1 tile at a given resolution and padding, then measure the result. Islands outside every tile are packed too, as the Pack button does. `keep_scale` moves the islands without scaling them, so a texel density set before is kept. |
 | `measure` | Coverage, overlap between islands, island sizes, out-of-tile islands, border length, padding share. |
 | `diagnose` | The same numbers turned into findings, each naming the lever that fixes it. |
 | `render_layout` | A PNG of the layout: island borders, or a distortion heat map; the whole tile or a zoom. |

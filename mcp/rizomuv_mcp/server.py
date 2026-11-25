@@ -58,6 +58,8 @@ Measured on a 2,573-island hard-surface scene — read before changing parameter
 • rotation_step below 90° is a trap: 45° and 15° cost 6–8 % of coverage against 90° and take 2–3× longer \
 (axis-aligned islands meet flat edge to flat edge; rotated ones leave wedges).
 • MaxMutations is deliberately not exposed: above a few hundred islands it burns minutes for no gain.
+• keep_scale=true keeps the islands' size (a texel density set before stays); without it, Pack rescales them \
+to fill the tile.
 Pack takes ~10–25 s on 2.5k islands. One call = one undo step.
 extra_params are deep-merged into RizomUV's Pack parameters (command_help('Pack') documents them); \
 the measured guidance is command_help('guide:packing')."""
@@ -395,6 +397,81 @@ def build_server(config) -> MCPServer:
                 out["rizomuv_result"] = rest
         return out
 
+    EdgeCouple = Annotated[list[int], Field(min_length=2, max_length=2)]
+    EDGES_FIELD = Field(description=(
+        "The edges, as couples [polygon, side]: [[12, 0], [12, 1], [40, 3]]. Polygon IDs are the faces in the "
+        "order of the file (in an OBJ, the n-th 'f' line, from 0); side i joins the polygon's vertices i and i + 1, "
+        "in the order the face lists them (the last side closes back to vertex 0). Either polygon of an edge "
+        "names it. These names stay valid after cuts and welds."), min_length=1)
+
+    def _edge_ids(edges):
+        flat = []
+        for e in edges:
+            if not isinstance(e, (list, tuple)) or len(e) != 2:
+                raise ToolError("each edge is a couple [polygon, side], got %r" % (e,))
+            flat += [int(e[0]), int(e[1])]
+        return flat
+
+    async def _seam_edit(command, edges, ctx):
+        session, progress = session_of(ctx), _reporter(ctx)
+        before = await session.scene(progress)
+        if not before.get("has_mesh"):
+            raise ToolError("No mesh is loaded: call load first.")
+        t0 = time.perf_counter()
+        await session.execute(command, {"PrimType": "Edge", "IDs": _edge_ids(edges), "EdgesAsPolyEdgeIDs": True},
+                              label=command, progress=progress)
+        after = await session.scene(progress)
+        session.last_pack = None
+        return {"edges": len(edges), "seconds": round(time.perf_counter() - t0, 2),
+                "islands_before": before.get("islands"), "islands_after": after.get("islands"), "scene": after,
+                "note": "The UVs are not unfolded again: call unfold for the islands to lie flat."}
+
+    @mcp.tool(title="Cut seams", description=(
+        "Cut UV seams along the given edges, named by couples [polygon, side]. An edge already cut, or on the "
+        "border of the mesh, is left as it is. Only the topology changes: call unfold afterwards. Symmetric "
+        "edges are cut too when RizomUV's symmetry is on. One call = one undo step. Fails, naming the couple, "
+        "if a couple names no polygon or no side of it."),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True,
+                                    open_world_hint=False))
+    @_guard
+    async def cut(edges: Annotated[list[EdgeCouple], EDGES_FIELD], ctx: Context = None) -> dict[str, Any]:
+        return await _seam_edit("Cut", edges, ctx)
+
+    @mcp.tool(title="Weld seams", description=(
+        "Weld (sew back) UV seams along the given edges, named by couples [polygon, side]: the two sides of each "
+        "cut edge are joined again. An edge that is not cut is left as it is. Only the topology changes: call "
+        "unfold afterwards. One call = one undo step. Fails, naming the couple, if a couple names no polygon "
+        "or no side of it."),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True,
+                                    open_world_hint=False))
+    @_guard
+    async def weld(edges: Annotated[list[EdgeCouple], EDGES_FIELD], ctx: Context = None) -> dict[str, Any]:
+        return await _seam_edit("Weld", edges, ctx)
+
+    @mcp.tool(title="Optimize", description=(
+        "Relax the UV islands of the working set without changing their seams: it lowers the distortion of "
+        "islands already unfolded (after an unfold, a cut, or on the artist's own UVs) and keeps their place. "
+        "working_set is RizomUV's WorkingSet ('Visible' by default, 'Selected' for the selection). extra_params "
+        "are merged into RizomUV's Optimize parameters (see command_help('Optimize')): Iterations, "
+        "AlignBorders, TriangleFlips, BorderIntersections... One call = one undo step."),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                                    open_world_hint=False))
+    @_guard
+    async def optimize(
+            working_set: Annotated[str, Field(description="RizomUV WorkingSet, e.g. Visible or Selected.")] = "Visible",
+            extra_params: Annotated[dict[str, Any] | None, Field(
+                description="More Optimize parameters, merged over the defaults.")] = None,
+            ctx: Context = None) -> dict[str, Any]:
+        session, progress = session_of(ctx), _reporter(ctx)
+        params = _deep_merge({"WorkingSet": working_set, "PrimType": "Island"}, extra_params or {})
+        t0 = time.perf_counter()
+        result = await session.execute("Optimize", params, label="Optimize", progress=progress)
+        session.last_pack = None
+        out = {"params": params, "seconds": round(time.perf_counter() - t0, 2)}
+        if isinstance(result, dict) and result:
+            out["rizomuv_result"] = result
+        return out
+
     @mcp.tool(title="Pack", description=PACK_DESCRIPTION,
               annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
                                           open_world_hint=False))
@@ -406,11 +483,18 @@ def build_server(config) -> MCPServer:
                                                  ge=64, le=16384)] = 1024,
             rotation_step: Annotated[float, Field(description="Rotation step in degrees; below 90 costs coverage "
                                                               "and time.", ge=1, le=360)] = 90,
+            keep_scale: Annotated[bool, Field(description=(
+                "Move and turn the islands without scaling them, so a texel density set before is kept. "
+                "They may then not all fit in the tile."))] = False,
             measure: Annotated[bool, Field(description="Measure the result (about 0.5 s).")] = True,
             extra_params: Annotated[dict[str, Any] | None, Field(
                 description="More Pack parameters, deep-merged over the canonical ones.")] = None,
             ctx: Context = None) -> dict[str, Any]:
         extra = extra_params or {}
+        if keep_scale:
+            # no rescale before the layout (Scaling.Mode OFF), none to fill the space (Optimization None),
+            # none after it (LayoutScalingMode TRANSLATE_ONLY)
+            extra = _deep_merge({"Scaling": {"Mode": 0, "Optimization": "None"}, "LayoutScalingMode": 1}, extra)
         if any(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 1
                for v in _find_key(extra, "MaxMutations")):
             raise ToolError(_MAX_MUTATIONS)
@@ -543,6 +627,152 @@ def build_server(config) -> MCPServer:
                                             "tmp_dir": str(paths.state_dir("tmp"))},
                                label="Diagnosing", progress=progress)
         out["parameters_from"] = source
+        return out
+
+    async def _uv_check(session, progress, params):
+        report = await session.execute("UvCheck", params, label="Checking the UVs", progress=progress,
+                                       timeout_ms=600000)
+        if not isinstance(report, dict) or "Verdict" not in report:
+            raise ToolError("UvCheck returned no report: %r" % (report,))
+        return report
+
+    def _check_summary(check, limit=50):
+        out = {"state": check.get("State"), "severity": check.get("Severity"), "count": check.get("Count"),
+               "text": check.get("Text")}
+        if check.get("Value") is not None:
+            out["value"] = check.get("Value")
+        for key, name in (("IslandIDs", "island_ids"), ("PolyIDs", "poly_ids"), ("TileKeys", "tiles")):
+            ids = check.get(key) or []
+            if ids:
+                out[name] = _ids(ids, limit)
+        return out
+
+    @mcp.tool(title="Validate the UVs", description=(
+        "Check whether the UVs are fit for a texture, check by check, as RizomUV's UV Validator does: "
+        "overlapping islands, flipped faces, zero-area faces, islands not unfolded, islands crossing a tile "
+        "border, padding between islands, margin to the tile border, tile coverage, tiny islands, stretch and "
+        "texel density. Returns the verdict (Valid, ValidWithWarnings, NotValid), each check's state with the "
+        "islands or polygons it is about, and the statistics. Read only. Pixel thresholds are measured at the "
+        "UV set's map resolution unless map_resolution is given. extra_params are UvCheck's other members "
+        "(see command_help('UvCheck')): MinCoveragePct, MinIslandPx, MaxStretchPct, TexelDensity (texels per "
+        "scene unit), Severity... raster=false skips the overlap, padding and coverage checks (they then read "
+        "Stale), for a fast answer on a big mesh."),
+        annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True,
+                                    open_world_hint=False))
+    @_guard
+    async def validate(
+            map_resolution: Annotated[int | None, Field(description="Map resolution in pixels.", ge=1)] = None,
+            padding_px: Annotated[float | None, Field(
+                description="Smallest gap between two islands, in pixels (RizomUV default 16).", ge=0)] = None,
+            margin_px: Annotated[float | None, Field(
+                description="Smallest gap between an island and its tile border, in pixels (default 8).",
+                ge=0)] = None,
+            raster: Annotated[bool, Field(description="Run the overlap, padding and coverage checks.")] = True,
+            extra_params: Annotated[dict[str, Any] | None, Field(description="More UvCheck members.")] = None,
+            ctx: Context = None) -> dict[str, Any]:
+        session, progress = session_of(ctx), _reporter(ctx)
+        params = {"Raster": raster}
+        for key, value in (("MapResolution", map_resolution), ("MinPaddingPx", padding_px),
+                           ("MinMarginPx", margin_px)):
+            if value is not None:
+                params[key] = value
+        params = _deep_merge(params, extra_params or {})
+        t0 = time.perf_counter()
+        report = await _uv_check(session, progress, params)
+        checks = report.get("Checks") or {}
+        failing = [name for name, c in checks.items() if c.get("State") == "Fail"]
+        return {"verdict": report["Verdict"], "errors": report.get("Errors"), "warnings": report.get("Warnings"),
+                "passed": report.get("Passed"), "partial": report.get("Partial"), "failing": failing,
+                "checks": {name: _check_summary(c) for name, c in checks.items()},
+                "stats": {k: v for k, v in (report.get("Stats") or {}).items() if "Histogram" not in k},
+                "seconds": round(time.perf_counter() - t0, 2),
+                "note": "island_ids and poly_ids can be selected with run_command('Select', ...)."}
+
+    UNIT_METERS = {"km": 1000.0, "m": 1.0, "dm": 0.1, "cm": 0.01, "mm": 0.001, "in": 0.0254, "ft": 0.3048,
+                   "yd": 0.9144, "mi": 1609.344}
+
+    async def _density_frame(session, progress):
+        """The scene unit, the map resolution and the tile width texel densities are read against."""
+        scene_unit = await session.execute("Get", "Lib.Scene.Settings.Unit", label="Reading the scene unit",
+                                           progress=progress)
+        rez = await session.execute("Get", "Lib.Mesh.RootGroup.Properties.Pack.MapResolution",
+                                    label="Reading the map resolution", progress=progress)
+        box = await session.execute("Get", "Lib.Mesh.RootGroup.Properties.Box", label="Reading the tile",
+                                    progress=progress)
+        tile = (box[1] - box[0]) if isinstance(box, list) and len(box) >= 2 and box[1] > box[0] else 1.0
+        return str(scene_unit), int(rez or 2048), float(tile)
+
+    def _per_scene_unit(value, unit, scene_unit):
+        """Texels per `unit` ("tx/cm") -> texels per scene unit."""
+        u = unit[3:] if unit.startswith("tx/") else unit
+        if u == scene_unit:
+            return value
+        if u not in UNIT_METERS or scene_unit not in UNIT_METERS:
+            raise ToolError("Cannot convert %s to texels per scene unit: the scene unit is %r. Give the unit as "
+                            "'tx/%s', or set the scene unit (run_command Set Lib.Scene.Settings.Unit)."
+                            % (unit, scene_unit, scene_unit))
+        return value * UNIT_METERS[scene_unit] / UNIT_METERS[u]
+
+    def _in_unit(per_scene, unit, scene_unit):
+        try:
+            return per_scene / _per_scene_unit(1.0, unit, scene_unit)
+        except ToolError:
+            return None
+
+    async def _density_report(session, progress, unit, scene_unit, rez, tolerance_pct):
+        report = await _uv_check(session, progress, {"Raster": False, "TexelDensityTolerancePct": tolerance_pct})
+        stats = report.get("Stats") or {}
+        median = stats.get("TexelDensityMedian") or 0.0
+        check = (report.get("Checks") or {}).get("TexelDensity") or {}
+        off = _ids(check.get("IslandIDs"))
+        off["tolerance_pct"] = tolerance_pct
+        return {"median": _in_unit(median, unit, scene_unit), "unit": unit,
+                "median_per_scene_unit": median, "scene_unit": scene_unit, "map_resolution": rez,
+                "islands_off_median": off}
+
+    @mcp.tool(title="Texel density", description=(
+        "Read or set the texel density: how many texture pixels fall on a length of the model's surface, at the "
+        "UV set's map resolution. action='read' gives the median density (weighted by surface) and the islands "
+        "more than tolerance_pct away from it. action='set' scales the islands of the working set so that each "
+        "has the density value (per island, so all match), or with uniform=true scales them all by one factor "
+        "so their average reaches it (their relative sizes stay). Each island is scaled about its centre: "
+        "islands may overlap afterwards, so pack next with keep_scale=true, or the pack rescales them and the "
+        "density changes again. unit is 'tx/cm' by default (tx/m, tx/mm, tx/in, tx/ft...). One set = one undo "
+        "step."),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                                    open_world_hint=False))
+    @_guard
+    async def texel_density(
+            action: Annotated[Literal["read", "set"], Field(description="read, or set.")] = "read",
+            value: Annotated[float | None, Field(description="The density to set, in unit.", gt=0)] = None,
+            unit: Annotated[str, Field(description="Texels per length unit, e.g. tx/cm.")] = "tx/cm",
+            uniform: Annotated[bool, Field(description="set: one factor for all, relative sizes kept.")] = False,
+            working_set: Annotated[str, Field(description="RizomUV WorkingSet for set.")] = "Visible",
+            tolerance_pct: Annotated[float, Field(description="read: tolerance around the median.", gt=0)] = 10.0,
+            ctx: Context = None) -> dict[str, Any]:
+        session, progress = session_of(ctx), _reporter(ctx)
+        scene = await session.scene(progress)
+        if not scene.get("has_mesh"):
+            raise ToolError("No mesh is loaded: call load first.")
+        scene_unit, rez, tile = await _density_frame(session, progress)
+        out = {}
+        if action == "set":
+            if value is None:
+                raise ToolError("action='set' needs value.")
+            target = _per_scene_unit(value, unit, scene_unit)
+            # islands brought to 1:1 (one UV unit per scene unit) then scaled by factor: a density of
+            # factor * map_resolution / tile_width texels per scene unit
+            factor = target * tile / rez
+            await session.execute("Deform", {
+                "WorkingSet": working_set, "PrimType": "Island", "ResetIslandScale": True,
+                "Clustering": "Single" if uniform else "Multi", "Anchoring": "Center",
+                "Transform": [factor, 0, 0, 0, factor, 0, 0, 0, 1]}, label="Setting the texel density",
+                progress=progress)
+            session.last_pack = None
+            out["set"] = {"value": value, "unit": unit, "uniform": uniform, "working_set": working_set,
+                          "scale_factor": factor}
+            out["note"] = "Islands were scaled about their centres: pack(keep_scale=true) before saving."
+        out.update(await _density_report(session, progress, unit, scene_unit, rez, tolerance_pct))
         return out
 
     @mcp.tool(title="Render the layout", description=RENDER_DESCRIPTION,

@@ -16,7 +16,8 @@ from rizomuv_mcp.config import Config
 from rizomuv_mcp.server import build_server
 
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose", "render_layout",
-                  "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help"}
+                  "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help", "cut", "weld",
+                  "optimize", "validate", "texel_density"}
 
 
 def text(result):
@@ -329,6 +330,76 @@ def test_uv_sets(snap_exe, isolated_dirs, example_mesh):
             r = await call(c, "uv_sets", {"action": "set_current", "name": "Nope"})
             assert r.is_error and "UV sets: Default, Fresh" in text(r)
     anyio.run(go)
+
+CUBE_OBJ = """v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+v 0 0 1
+v 1 0 1
+v 1 1 1
+v 0 1 1
+f 1 4 3 2
+f 5 6 7 8
+f 1 2 6 5
+f 2 3 7 6
+f 3 4 8 7
+f 4 1 5 8
+"""
+
+
+@pytest.mark.live
+def test_cut_and_weld_by_polygon_and_side(snap_exe, isolated_dirs, tmp_path):
+    cube = tmp_path / "cube.obj"
+    cube.write_text(CUBE_OBJ)
+    face0 = [[0, 0], [0, 1], [0, 2], [0, 3]]
+
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(cube)}))
+            cut = data(await call(c, "cut", {"edges": face0}))
+            assert cut["islands_after"] == cut["islands_before"] + 1, cut
+            weld = data(await call(c, "weld", {"edges": face0}))
+            assert weld["islands_after"] == cut["islands_before"], weld
+            data(await call(c, "undo"))
+            assert data(await call(c, "session_info"))  # still connected
+            r = await call(c, "cut", {"edges": [[99, 0]]})
+            assert r.is_error and "no polygon 99" in text(r)
+            r = await call(c, "cut", {"edges": [[0, 7]]})
+            assert r.is_error and "no side 7" in text(r)
+    anyio.run(go)
+
+@pytest.mark.live
+def test_validate_texel_density_and_optimize(snap_exe, isolated_dirs, example_mesh):
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(example_mesh)}))
+            data(await call(c, "unfold"))
+            v = data(await call(c, "validate", {"raster": False}))
+            assert v["verdict"] in ("Valid", "ValidWithWarnings", "NotValid")
+            assert {"OverlappingIslands", "FlippedFaces", "TexelDensity"} <= set(v["checks"])
+            assert v["stats"]["Islands"] > 0 and v["checks"]["OverlappingIslands"]["state"] == "Stale"
+
+            td = data(await call(c, "texel_density", {"action": "set", "value": 0.5, "unit": "tx/cm"}))
+            assert td["set"]["scale_factor"] > 0
+            assert abs(td["median"] - 0.5) < 0.005, td
+            assert td["islands_off_median"]["count"] == 0, td
+            in_mm = data(await call(c, "texel_density", {"unit": "tx/mm"}))
+            assert abs(in_mm["median"] - 0.05) < 0.0005, in_mm
+
+            data(await call(c, "pack", {"keep_scale": True, "measure": False}))
+            after = data(await call(c, "texel_density"))
+            assert abs(after["median"] - 0.5) < 0.005, after
+
+            o = data(await call(c, "optimize", {"extra_params": {"Iterations": 2}}))
+            assert o["params"]["Iterations"] == 2
+
+            r = await call(c, "texel_density", {"action": "set"})
+            assert r.is_error and "needs value" in text(r)
+            r = await call(c, "cut", {"edges": [[0, 0, 0]]})
+            assert r.is_error
+    anyio.run(go)
+
 
 def test_command_help_needs_no_rizomuv(isolated_dirs):
     async def go():
