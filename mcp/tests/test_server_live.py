@@ -561,3 +561,39 @@ def test_the_viewports_follow_the_tools_and_the_view_tool_moves_them(snap_exe, i
         assert inst.proc.wait(30) == 0
     finally:
         inst.terminate()
+
+
+def _big_squares_obj(path):
+    """Four separate 6 x 6 squares, their UVs their XY: much larger than the tile, one centred on it,
+    the three others centred outside it -- the layout an unfold at 3D scale leaves."""
+    lines, n = [], 0
+    for cx, cy in ((0.5, 0.5), (-4.0, 0.5), (5.0, 0.5), (0.5, -4.0)):
+        corners = [(cx - 3, cy - 3), (cx + 3, cy - 3), (cx + 3, cy + 3), (cx - 3, cy + 3)]
+        for x, y in corners:
+            lines += ["v %g %g 0" % (x, y), "vt %g %g" % (x, y)]
+        lines.append("f " + " ".join("%d/%d" % (n + i, n + i) for i in range(1, 5)))
+        n += 4
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.live
+def test_pack_brings_in_the_islands_a_large_one_leaves_no_room_for(snap_exe, isolated_dirs, tmp_path):
+    """As the Pack button with nothing selected: the islands outside the tile are filed into it first
+    (IslandGroups), then packed, even when the island already in the tile is larger than it -- the case
+    a Pack with AuxGroup and no distribution got wrong. distribute=false leaves them outside, as the
+    button does with 'Distribute in tiles' off."""
+    mesh = _big_squares_obj(tmp_path / "squares.obj")
+
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(mesh)}))
+            alone = data(await call(c, "pack", {"distribute": False}))
+            assert alone["distributed"] is False and alone["undo_steps"] == 1
+            assert alone["measure"]["outside_tile"]["islands"] == 3 and "AuxGroup" not in alone["params"]
+            data(await call(c, "undo"))
+            packed = data(await call(c, "pack", {}))
+            assert packed["distributed"] is True and packed["undo_steps"] == 2
+            assert packed["measure"]["outside_tile"]["islands"] == 0
+            assert packed["measure"]["overlap"]["island_pairs"] == 0
+    anyio.run(go)

@@ -53,7 +53,7 @@ the entry's `env`. `rizomuv-mcp --launcher-info` prints what it resolved (on std
 | `optimize` | Relax the islands without changing their seams. One undo step. |
 | `validate` | Check the UVs as the UV Validator does (overlaps, flips, padding, margin, coverage, stretch, texel density...) and give the verdict. Read only. |
 | `texel_density` | Read the texel density, or set it on the islands (per island or uniformly). One undo step; pack afterwards with `keep_scale`. |
-| `pack` | Lay the islands into the 0–1 tile at a given resolution and padding, then measure the result. Islands outside every tile are packed too, as the Pack button does. `keep_scale` moves the islands without scaling them, so a texel density set before is kept. |
+| `pack` | Lay the islands into the 0–1 tile at a given resolution and padding, then measure the result. Like the Pack button with "Distribute in tiles" on, it first spreads the islands over the tiles, those outside included (`distribute`, default: that toggle; two undo steps then). `keep_scale` moves the islands without scaling them, so a texel density set before is kept. |
 | `measure` | Coverage, overlap between islands, island sizes, out-of-tile islands, border length, padding share. |
 | `diagnose` | The same numbers turned into findings, each naming the lever that fixes it. |
 | `render_layout` | A PNG of the layout: island borders, or a distortion heat map; the whole tile or a zoom. |

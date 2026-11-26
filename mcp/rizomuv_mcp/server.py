@@ -61,7 +61,8 @@ Measured on a 2,573-island hard-surface scene — read before changing parameter
 • MaxMutations is deliberately not exposed: above a few hundred islands it burns minutes for no gain.
 • keep_scale=true keeps the islands' size (a texel density set before stays); without it, Pack rescales them \
 to fill the tile.
-Pack takes ~10–25 s on 2.5k islands. One call = one undo step.
+• distribute: before packing, spread the islands over the tiles, those outside the tile grid included, as the Pack button does when its 'Distribute in tiles' toggle is on; by default it follows that toggle (Prefs.Layout.Distribute, on unless the artist turned it off). distribute=false packs the islands that are in the tiles and leaves those outside where they are, as the button does with the toggle off.
+Pack takes ~10–25 s on 2.5k islands. One call = one undo step, two when it distributes first.
 extra_params are deep-merged into RizomUV's Pack parameters (command_help('Pack') documents them); \
 the measured guidance is command_help('guide:packing')."""
 
@@ -156,8 +157,9 @@ Pack takes ~10–25 s on 2.5k islands (1024: ~10 s, 2048: ~18–20 s, padding 0:
 3. render_layout to see why — never to rank two layouts: the eye ranks them badly.
 """
 
-# AuxGroup: an island outside every tile is taken into the root group and packed with it, as the
-# Pack button does; without it such an island stays where it is.
+# AuxGroup: the islands outside every tile, in the root group, are packed with the tiles' -- after the
+# IslandGroups distribution the pack tool runs first, as the Pack button does (see pack); without the
+# distribution the tool drops it, as the button does.
 CANONICAL_PACK = {"RootGroup": "RootGroup", "AuxGroup": "RootGroup", "WorkingSet": "Visible", "Translate": True, "Scaling": {"Mode": 2},
                   "LayoutScalingMode": 2, "RecursionDepth": 1, "ProcessTileSelection": False,
                   "UsePixelUnit": True}
@@ -534,6 +536,9 @@ def build_server(config) -> MCPServer:
             keep_scale: Annotated[bool, Field(description=(
                 "Move and turn the islands without scaling them, so a texel density set before is kept. "
                 "They may then not all fit in the tile."))] = False,
+            distribute: Annotated[bool | None, Field(description=(
+                "Spread the islands over the tiles first, as the Pack button's 'Distribute in tiles' does. "
+                "Default: that toggle's setting in RizomUV."))] = None,
             measure: Annotated[bool, Field(description="Measure the result (about 0.5 s).")] = True,
             extra_params: Annotated[dict[str, Any] | None, Field(
                 description="More Pack parameters, deep-merged over the canonical ones.")] = None,
@@ -550,9 +555,31 @@ def build_server(config) -> MCPServer:
                                   Rotate={"Initial": "Auto", "Min": 0.0, "Max": 360.0, "Step": float(rotation_step)}),
                              extra)
         session, progress = session_of(ctx), _reporter(ctx)
+        await session.ensure(progress)
+        if distribute is None:
+            pref = await session.execute("Get", "Prefs.Layout.Distribute", label="Pack", progress=progress)
+            distribute = pref is not False
         t0 = time.perf_counter()
+        if distribute:
+            # What the Pack button queues first when nothing is selected (CFeaturePacking::ToModelButtons,
+            # CreateDistributeParams with DIST_SHUFFLE | DIST_OUT_OF_TILES): the islands outside the tiles
+            # are filed into them, without moving. The Pack's AuxGroup never goes without it in the
+            # application: alone, it gives the islands left in the root group a share of each tile's free
+            # room at their current scale, none when an island already in the tile covers it (an unfold
+            # at 3D scale), and they stay outside.
+            await session.execute("IslandGroups", {
+                "Mode": "DistributeTilesContent", "FreezeIslands": True, "UseTileLocks": True,
+                "UseIslandLocks": True, "WorkingSet": "UnLocked", "GroupPaths": ["RootGroup"]},
+                label="Pack", progress=progress)
+        elif "AuxGroup" not in extra:
+            # the button without 'Distribute in tiles': the islands outside the tiles stay where they are
+            params.pop("AuxGroup", None)
         await session.execute("Pack", params, label="Pack", progress=progress)
-        out = {"params": params, "seconds": round(time.perf_counter() - t0, 2)}
+        out = {"params": params, "distributed": bool(distribute), "undo_steps": 2 if distribute else 1,
+               "seconds": round(time.perf_counter() - t0, 2)}
+        if not distribute:
+            out["note"] = ("Not distributed: as with the Pack button when 'Distribute in tiles' is off, the islands "
+                           "outside the tiles are left where they are.")
         await _follow(session, progress, out)
         res = params.get("MapResolution")
         pad = params.get("PaddingSizePx") if params.get("UsePixelUnit") else None
