@@ -668,3 +668,39 @@ def test_measure_judges_islands_against_the_tile_grid():
     cov = {tuple(t["tile"]): t["coverage"] for t in two["coverage_per_tile"]}
     assert abs(cov[(1, 0)] - (0.25 + 0.2 * 0.4)) < 0.02
     assert abs(two["coverage"] - (cov[(0, 0)] + cov[(1, 0)]) / 2) < 1e-3
+
+
+_READ_LINK_CLIENT = """
+import json, sys
+sys.path.insert(0, sys.argv[2])
+from RizomUVLink import CRizomUVLink
+link = CRizomUVLink()
+link.Connect(int(sys.argv[1]))
+print(json.dumps(link.Execute("LinkClientInfo", {}), default=str))
+"""
+
+
+@pytest.mark.live
+def test_the_server_introduces_itself_to_rizomuv(snap_exe, isolated_dirs, example_mesh, pkg_dir):
+    """Each connection says who drives RizomUV (LinkClientInfo), for its status bar indicator:
+    the server, and the MCP client named by its initialize. RizomUV keeps it while connected.
+    Read from another process: the binding holds the GIL for a whole command."""
+    import subprocess
+    import sys
+
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(example_mesh)}))
+            info = data(await call(c, "session_info"))
+            introduced = info["introduced_as"]
+            assert introduced and introduced["Name"] == "RizomUV MCP server" and introduced["Version"]
+            assert introduced.get("Detail", "").startswith("for "), introduced
+            seen = subprocess.run([sys.executable, "-c", _READ_LINK_CLIENT, str(info["port"]), str(pkg_dir)],
+                                  capture_output=True, text=True, timeout=60)
+            assert seen.returncode == 0, seen.stderr
+            state = json.loads(seen.stdout.strip().splitlines()[-1])
+            assert state["Name"] == "RizomUV MCP server" and state["Detail"] == introduced["Detail"]
+            assert state["Connections"] >= 1 and state["Commands"] > 0
+            r = await call(c, "run_command", {"command": "LinkClientInfo", "params": {"Name": "someone else"}})
+            assert r.is_error and "introduces itself" in text(r)
+    anyio.run(go)

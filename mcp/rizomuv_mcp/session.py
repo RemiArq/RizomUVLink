@@ -223,6 +223,9 @@ class Session:
         self.last_pack = None          # {"map_resolution", "padding_px"} of the last pack tool call
         self.scene_cache = None
         self.notes = []                # why discovered candidates were skipped, last resolution
+        # what each connection says of this server to RizomUV (LinkClientInfo): set by the server
+        # from the MCP client's initialize, so that RizomUV can show who drives it
+        self.client = None
         self._clear()
         atexit.register(self._atexit)
 
@@ -234,6 +237,7 @@ class Session:
         self.pid = None
         self.version = None
         self.headless = None
+        self.announced = False
         self.record = None             # discovery.InstanceRecord, when the instance published one
         self.exe = None
         self.instance_lock = None
@@ -299,7 +303,8 @@ class Session:
         return self.worker
 
     async def _connect_worker(self, worker, port, *, token, timeout, alive, progress, label):
-        fut = await worker.submit("connect", {"port": port, "token": token, "startup_timeout": timeout})
+        fut = await worker.submit("connect", {"port": port, "token": token, "startup_timeout": timeout,
+                                              "client": self.client})
         resp = await self._await(worker, fut, label=label, progress=progress, alive=alive, attached=False)
         if not resp["ok"]:
             raise WorkerError(resp["error"]["kind"], resp["error"]["message"])
@@ -515,6 +520,7 @@ class Session:
         self.mode, self.owned, self.inst = mode, owned, inst
         self.port, self.pid, self.record, self.instance_lock = port, pid, record, lock
         self.version, self.headless = info["version"], info["headless"]
+        self.announced = bool(info.get("announced"))
         self.exe = exe
         self.connected_at = time.time()
         self.scene_cache = None
@@ -537,6 +543,7 @@ class Session:
             self._drop_worker()
             raise ToolError("Could not reconnect to RizomUV on port %d: %s" % (self.port, e.message)) from None
         self.version = info["version"]
+        self.announced = bool(info.get("announced"))
 
     async def _reset_locked(self):
         """Forget the current instance. An owned one is killed if it still runs (callers
@@ -697,6 +704,8 @@ class Session:
             alive, code = self._watch()
             out.update({"port": self.port, "pid": self.pid, "version": self.version, "headless": self.headless,
                         "owned": self.owned, "instance_alive": alive()})
+            # what RizomUV's status bar shows of this server (a RizomUV without LinkClientInfo shows nothing)
+            out["introduced_as"] = self.client if getattr(self, "announced", False) else None
             if self.inst is not None:
                 out["log"] = str(self.inst.log_path)
             if not out["instance_alive"]:

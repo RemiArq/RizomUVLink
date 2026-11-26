@@ -141,7 +141,7 @@ class Worker:
     def op_ping(self):
         return {"pong": True}
 
-    def op_connect(self, port, token=None, startup_timeout=60):
+    def op_connect(self, port, token=None, startup_timeout=60, client=None):
         mod = self._binding()
         if self.link is None:
             self.link = mod.CRizomUVLink()
@@ -161,8 +161,18 @@ class Worker:
             if startup_done or time.monotonic() > deadline:
                 break
             time.sleep(0.2)
+        announced = False
+        if client and token_ok is not False:
+            # Who this client is, for the RizomUVLink indicator of RizomUV's status bar. Each
+            # connection introduces itself again: RizomUV forgets a description when its
+            # client disconnects. A RizomUV older than the command does not know it.
+            try:
+                self._exec("LinkClientInfo", client)
+                announced = True
+            except OpError as e:
+                log.debug("LinkClientInfo not sent: %s", e.message)
         return {"version": version, "headless": self._get_quiet("Vars.Infos.Headless"),
-                "startup_done": startup_done, "token_ok": token_ok,
+                "startup_done": startup_done, "token_ok": token_ok, "announced": announced,
                 "identifier": self._get_quiet("Vars.RizomUVLink.Identifier")}
 
     def op_execute(self, command, params=None, timeout_ms=COMMAND_TIMEOUT_MS):

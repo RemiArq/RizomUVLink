@@ -157,6 +157,19 @@ _PREFS = ("Preferences and controls persist beyond this session (and a headless 
 _add("SavePreferences SaveControls LoadPrefs LoadControls ResetPrefs ResetControls MigrateUserData",
      "prefs_ui", False, False, _PREFS)
 _add("MeshCheck", "read", True, True)
+_add("Measure", "read", True, True)
+
+
+def _uv_check_guard(params):
+    if isinstance(params, dict) and params.get("File"):
+        return "UvCheck with File writes a report file; use the validate tool, which returns the report."
+    return None
+
+
+_add("UvCheck", "read", True, True, guard=_uv_check_guard)
+_add("LinkClientInfo", "internal", False, False,
+     "The server introduces itself to RizomUV at each connection (the status bar's RizomUVLink indicator); "
+     "session_info says which RizomUV this session drives.")
 _add("ViewCamera", "view", True, True)
 # A node graph runs as one undo step, and a failing graph leaves the mesh untouched.
 _add("Graph", "scene", True, True)

@@ -286,6 +286,20 @@ def _analysis_defaults(session, map_resolution, padding_px):
     return res, pad, source
 
 
+def _link_client_info(ctx):
+    """How this server introduces itself to RizomUV (LinkClientInfo), naming the MCP client that drives
+    it as its initialize says (Claude Code, Claude Desktop, Cursor...)."""
+    info = {"Name": "RizomUV MCP server", "Version": __version__}
+    try:
+        params = ctx.session.client_params
+        client = params.client_info if params is not None else None
+    except Exception:   # noqa: BLE001 -- the description is a courtesy, never a failure
+        client = None
+    if client is not None and getattr(client, "name", None):
+        info["Detail"] = "for %s%s" % (client.name, " " + client.version if getattr(client, "version", None) else "")
+    return info
+
+
 # ------------------------------------------------------------------ the server
 
 def build_server(config) -> MCPServer:
@@ -310,7 +324,10 @@ def build_server(config) -> MCPServer:
                     lifespan=lifespan, log_level=config.log_level)
 
     def session_of(ctx) -> Session:
-        return ctx.request_context.lifespan_context
+        session = ctx.request_context.lifespan_context
+        if session.client is None:
+            session.client = _link_client_info(ctx)
+        return session
 
     # -------------------------------------------------------------- the viewports
 

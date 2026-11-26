@@ -18,7 +18,7 @@ def shipped_commands():
 
 
 def test_every_shipped_command_is_classified(shipped_commands):
-    assert len(shipped_commands) == 67
+    assert len(shipped_commands) == 70
     missing = [c for c in shipped_commands if policy.rule_info(c) is None]
     assert not missing, f"commands without a policy: {missing}"
     stale = sorted(set(policy.classified()) - set(shipped_commands))
