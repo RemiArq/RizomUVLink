@@ -1086,7 +1086,10 @@ def build_server(config) -> MCPServer:
         "source_uv_set defaults to the current UV set and source_file to the texture already assigned to that "
         "set; dest_uv_set must be another set (make one with uv_sets action='duplicate' before "
         "changing its UVs). Set normal_map=true for a tangent-space normal map. output_file must be "
-        "absolute and new unless overwrite=true. The scene is not changed. extra_params are merged into "
+        "absolute and new unless overwrite=true. The scene is not changed, unless show=true: then the result "
+        "becomes the texture of dest_uv_set, that set is made current and the viewports show it textured, as "
+        "the panel's 'Show it after Transfer' does (the source set keeps its own texture, so making it current "
+        "again shows the original). extra_params are merged into "
         "RizomUV's TextureTransfer parameters (Samples, Padding, ColorSpace, Maps for a texture set...)."),
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                                     open_world_hint=False))
@@ -1103,6 +1106,9 @@ def build_server(config) -> MCPServer:
                 description="Width and height of the output image (default: the source image's size).",
                 ge=16, le=16384)] = None,
             overwrite: Annotated[bool, Field(description="Allow replacing an existing file.")] = False,
+            show: Annotated[bool, Field(description=(
+                "Show the result in RizomUV: it becomes the texture of dest_uv_set, which is made current, "
+                "and the viewports show it textured."))] = False,
             extra_params: Annotated[dict[str, Any] | None, Field(
                 description="More TextureTransfer parameters, merged over these.")] = None,
             ctx: Context = None) -> dict[str, Any]:
@@ -1159,8 +1165,39 @@ def build_server(config) -> MCPServer:
         if isinstance(report, dict):
             keep = ("Width", "Height", "BitDepth", "NormalMap", "Coverage", "Device", "Maps")
             out.update({k.lower() if k != "NormalMap" else "normal_map": report[k] for k in keep if k in report})
-        out["note"] = ("The image is written; the scene is unchanged. In RizomUV it becomes visible once loaded "
-                       "as the texture of %s." % dest_uv_set)
+        if not show:
+            out["note"] = ("The image is written; the scene is unchanged. In RizomUV it becomes visible once loaded "
+                           "as the texture of %s (show=true does it)." % dest_uv_set)
+            return out
+        # What the panel does with its result (CFeatureTextureTransfer::AssignResult, ShowSet). A source set
+        # without a texture of its own gets the file it was read from, so that making it current again shows
+        # the original rather than the result. The set made current loads its texture as the user texture.
+        shown = out["show"] = {"texture": str(out_path) if "Maps" not in params else None}
+        current = await session.execute("Get", "Lib.CurrentUVSetName", label="UV sets", progress=progress)
+
+        def texture_path(name):
+            # the current set's texture lives on the mesh, the others' on their own UV set
+            return ("Lib.Mesh.RootGroup.Properties.Texture" if name == current
+                    else "Lib.UVSets.%s.RootGroup.Properties.Texture" % name)
+        assigned_source = await session.execute("Get", texture_path(source), label="UV sets", progress=progress)
+        if not isinstance(assigned_source, str) or not assigned_source.strip():
+            await session.execute("Set", {"Path": texture_path(source), "Value": src_path.as_posix()},
+                                  label="Show the result", progress=progress)
+            shown["source_texture_assigned"] = str(src_path)
+        if current != dest_uv_set:
+            await session.execute("Uvset", {"Mode": "SetCurrent", "Name": dest_uv_set}, label="Show the result",
+                                  progress=progress)
+            session.last_pack = None
+        if shown["texture"]:
+            await session.execute("Set", {"Path": "Lib.Mesh.RootGroup.Properties.Texture",
+                                          "Value": out_path.as_posix()}, label="Show the result", progress=progress)
+        for path, value in (("Vars.Viewport.Texture", "User"), ("Vars.Viewport.Viewport3D.Textured", True),
+                            ("Vars.Viewport.ViewportUV.Textured", True)):
+            await session.execute("Set", {"Path": path, "Value": value}, label="Show the result", progress=progress)
+        shown["current_uv_set"] = dest_uv_set
+        out["note"] = ("The result is the texture of %s, now the current UV set, and the viewports show it; "
+                       "uv_sets set_current %s shows the original." % (dest_uv_set, source))
+        await _follow(session, progress, out, ("3D", "UV"))
         return out
 
     @mcp.tool(title="Undo", description=(

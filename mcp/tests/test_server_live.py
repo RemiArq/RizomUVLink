@@ -480,8 +480,18 @@ def _quit(port):
     anyio.run(go)
 
 
+def _grid_png(path):
+    import struct, zlib
+    rows = b"".join(b"\0" + bytes(c for x in range(256) for c in (x, y, (x ^ y) & 255)) for y in range(256))
+    chunk = lambda kind, body: (struct.pack(">I", len(body)) + kind + body
+                                + struct.pack(">I", zlib.crc32(kind + body)))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 256, 256, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+    return path
+
+
 @pytest.mark.live
-def test_the_viewports_follow_the_tools_and_the_view_tool_moves_them(snap_exe, isolated_dirs, example_mesh):
+def test_the_viewports_follow_the_tools_and_the_view_tool_moves_them(snap_exe, isolated_dirs, example_mesh, tmp_path):
     """On a RizomUV on screen (not headless), the tools frame the viewports on their result, and the
     view tool frames, zooms, pans and turns them; with follow_view off the tools leave them alone."""
     inst = launch.launch_headless(snap_exe, headless=False)
@@ -523,6 +533,25 @@ def test_the_viewports_follow_the_tools_and_the_view_tool_moves_them(snap_exe, i
                                     ({"islands": [10 ** 7]}, "None of these ids")):
                     r = await call(c, "view", args)
                     assert r.is_error and words in text(r), text(r)
+
+                # transfer_texture show=true: the result is the texture of the destination set, made
+                # current, and the views show it; the source set keeps the image it was read from
+                source = _grid_png(tmp_path / "grid.png")
+                data(await call(c, "uv_sets", {"action": "duplicate", "name": "B"}))
+                data(await call(c, "uv_sets", {"action": "set_current", "name": "B"}))
+                data(await call(c, "pack", {"padding_px": 8, "measure": False}))
+                data(await call(c, "uv_sets", {"action": "set_current", "name": "Default"}))
+                result = tmp_path / "on_b.png"
+                shown = data(await call(c, "transfer_texture", {"dest_uv_set": "B", "output_file": str(result),
+                                                                "source_file": str(source), "show": True}))
+                assert shown["show"]["current_uv_set"] == "B" and result.is_file()
+                get = lambda path: call(c, "run_command", {"command": "Get", "params": path})
+                assert data(await get("Lib.CurrentUVSetName"))["result"] == "B"
+                assert data(await get("Lib.Mesh.RootGroup.Properties.Texture"))["result"] == result.as_posix()
+                assert data(await get("Vars.Viewport.Texture"))["result"] == "User"
+                assert data(await get("Vars.Viewport.ViewportUV.Textured"))["result"] is True
+                data(await call(c, "uv_sets", {"action": "set_current", "name": "Default"}))
+                assert data(await get("Lib.Mesh.RootGroup.Properties.Texture"))["result"] == source.as_posix()
 
             async with Client(build_server(Config(port=inst.port, follow_view=False))) as c:
                 assert "view_framed" not in data(await call(c, "unfold"))
