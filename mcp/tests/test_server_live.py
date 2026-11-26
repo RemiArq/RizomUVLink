@@ -597,3 +597,74 @@ def test_pack_brings_in_the_islands_a_large_one_leaves_no_room_for(snap_exe, iso
             assert packed["measure"]["outside_tile"]["islands"] == 0
             assert packed["measure"]["overlap"]["island_pairs"] == 0
     anyio.run(go)
+
+
+def _square_grid_obj(path, n=6):
+    """n x n separate unit squares, their UVs their XY, 0.5 apart: far outside the 0-1 tile."""
+    lines, k = [], 0
+    for i in range(n):
+        for j in range(n):
+            cx, cy = i * 1.5, j * 1.5
+            for x, y in ((cx, cy), (cx + 1, cy), (cx + 1, cy + 1), (cx, cy + 1)):
+                lines += ["v %g %g 0" % (x, y), "vt %g %g" % (x, y)]
+            lines.append("f " + " ".join("%d/%d" % (k + q, k + q) for q in range(1, 5)))
+            k += 4
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.live
+def test_pack_onto_a_two_tile_grid(snap_exe, isolated_dirs, tmp_path):
+    """columns/rows set the tile grid first (one more undo step), the distribution spreads the islands
+    over both tiles, and the measure judges them against the grid, not the 0-1 tile. (Four squares are
+    not enough: the Pack puts them all in the first tile, which they fill.)"""
+    mesh = _square_grid_obj(tmp_path / "grid.obj")
+
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(mesh)}))
+            packed = data(await call(c, "pack", {"columns": 2, "rows": 1}))
+            assert packed["tile_grid"]["columns"] == 2 and packed["tile_grid"]["rows"] == 1
+            assert packed["tile_grid"]["changed"] is True and packed["undo_steps"] == 3
+            m = packed["measure"]
+            assert m["tile_grid"] == [2, 1]
+            assert m["outside_tile"]["islands"] == 0          # inside [0, 2] x [0, 1]
+            assert m["across_tiles"]["islands"] == 0
+            assert m["overlap"]["island_pairs"] == 0
+            per_tile = {tuple(t["tile"]): t["coverage"] for t in m["coverage_per_tile"]}
+            assert set(per_tile) == {(0, 0), (1, 0)} and all(cv > 0.3 for cv in per_tile.values())
+            # the grid stays: a second pack without columns/rows keeps it and does not count its step
+            again = data(await call(c, "pack", {}))
+            assert again["tile_grid"] == {"columns": 2, "rows": 1, "changed": False}
+            assert again["undo_steps"] == 2 and again["measure"]["outside_tile"]["islands"] == 0
+            # measure on its own reads the grid from the scene
+            assert data(await call(c, "measure"))["tile_grid"] == [2, 1]
+    anyio.run(go)
+
+
+def test_measure_judges_islands_against_the_tile_grid():
+    """Pure metrics: a square in tile 1002 is outside the 0-1 tile, inside a 2x1 grid; one over the
+    border between the two tiles is reported across_tiles."""
+    import numpy as np
+    from rizomuv_mcp import metrics
+
+    def snap(squares):
+        uv, ids = [], []
+        for u0, v0, w in squares:
+            k = len(uv)
+            uv += [(u0, v0), (u0 + w, v0), (u0 + w, v0 + w), (u0, v0 + w)]
+            ids += [k, k + 1, k + 2, k + 3]
+        n = len(squares)
+        return metrics.UVSnapshot(np.full(n, 4, np.int64), np.asarray(ids, np.int64),
+                                  np.asarray(uv, np.float64), np.arange(n, dtype=np.int64))
+
+    s = snap([(0.1, 0.1, 0.5), (1.2, 0.2, 0.5), (0.8, 0.5, 0.4)])
+    one = metrics.measure(s, 256)
+    assert one["tile_grid"] == [1, 1] and one["outside_tile"]["islands"] == 2
+    assert "coverage_per_tile" not in one
+    two = metrics.measure(s, 256, tiles=(2, 1))
+    assert two["outside_tile"]["islands"] == 0
+    assert two["across_tiles"] == {"islands": 1, "example_ids": [2]}
+    cov = {tuple(t["tile"]): t["coverage"] for t in two["coverage_per_tile"]}
+    assert abs(cov[(1, 0)] - (0.25 + 0.2 * 0.4)) < 0.02
+    assert abs(two["coverage"] - (cov[(0, 0)] + cov[(1, 0)]) / 2) < 1e-3

@@ -76,7 +76,7 @@ def _areas_3d(mesh3d, snap, notes):
 
 
 def diagnose(snap: metrics.UVSnapshot, res: int, padding_px: float | None = None, mesh3d=None,
-             negative_uv_area: float | None = None, notes: list[str] | None = None) -> dict:
+             negative_uv_area: float | None = None, notes: list[str] | None = None, tiles=(1, 1)) -> dict:
     """Findings (most severe first), the measure dict and the 3D-based statistics.
 
     `mesh3d` is `objmesh.read_obj`'s (positions, face_sizes, face_pos_ids) for the same
@@ -108,7 +108,9 @@ def diagnose(snap: metrics.UVSnapshot, res: int, padding_px: float | None = None
             notes.append("The 3D mesh has no area at all; texel density and stretch were not computed.")
             area3_poly = isl3d = None
 
-    m = metrics.measure(snap, res, padding_px, exclude_islands=degenerate)
+    m = metrics.measure(snap, res, padding_px, exclude_islands=degenerate, tiles=tiles)
+    cols, rows = m["tile_grid"]
+    grid = "the 0–1 tile" if cols * rows == 1 else f"the {cols}x{rows} tile grid"
 
     # UV area per polygon and per island, from the same fan triangulation as the metrics.
     tris, tri_poly = metrics.fan(snap.poly_sizes, snap.poly_uvw_ids)
@@ -147,9 +149,16 @@ def diagnose(snap: metrics.UVSnapshot, res: int, padding_px: float | None = None
     if out["islands"]:
         findings.append(_finding(
             "high", "outside_tile",
-            f"{out['islands']} islands extend beyond the 0–1 tile (ids {_ids(out['example_ids'])}). "
-            "Their texels land in another tile or wrap around, unless the layout is meant for UDIM "
-            "tiles; pack moves them back in."))
+            f"{out['islands']} islands extend beyond {grid} (ids {_ids(out['example_ids'])}). "
+            "Their texels land in a tile the layout does not have or wrap around; pack moves them "
+            "back in, or pack with columns/rows to give the layout more tiles."))
+
+    across = m.get("across_tiles")
+    if across and across["islands"]:
+        findings.append(_finding(
+            "medium", "across_tiles",
+            f"{across['islands']} islands lie over a tile border (ids {_ids(across['example_ids'])}): "
+            "their texels are split between two UDIM tiles. Pack moves each into one tile."))
 
     if negative_uv_area is not None and negative_uv_area < 0:
         flipped_px = -negative_uv_area * res * res
@@ -165,7 +174,7 @@ def diagnose(snap: metrics.UVSnapshot, res: int, padding_px: float | None = None
 
     if degenerate.size:
         where = ""
-        if not _inside_tile(snap, degenerate):
+        if not _inside_tile(snap, degenerate, (cols, rows)):
             where = " — here outside the tile"
         findings.append(_finding(
             "medium", "degenerate_islands",
@@ -212,7 +221,7 @@ def diagnose(snap: metrics.UVSnapshot, res: int, padding_px: float | None = None
             "where."))
 
     if not any(f["severity"] in ("high", "medium") for f in findings):
-        checked = ["no overlap between islands", "nothing outside the tile"]
+        checked = ["no overlap between islands", f"nothing outside {grid}"]
         if texel is not None:
             checked.append("even texel density")
         if stretch is not None:
@@ -236,11 +245,12 @@ def diagnose(snap: metrics.UVSnapshot, res: int, padding_px: float | None = None
     }
 
 
-def _inside_tile(snap, islands):
+def _inside_tile(snap, islands, tiles=(1, 1)):
     corner_island = np.repeat(snap.poly_island_ids, snap.poly_sizes)
     uv = snap.uv[snap.poly_uvw_ids[np.isin(corner_island, islands)]]
     eps = metrics.OUTSIDE_TILE_EPS
-    return bool(uv.size == 0 or ((uv >= -eps) & (uv <= 1 + eps)).all())
+    top = np.asarray(tiles[:2], np.float64)
+    return bool(uv.size == 0 or ((uv[:, :2] >= -eps) & (uv[:, :2] <= top + eps)).all())
 
 
 def _resolution_findings(m, res, padding_px):

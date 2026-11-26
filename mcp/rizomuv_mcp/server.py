@@ -49,7 +49,8 @@ artist's instance: never load over their scene without asking, save to new files
 undo reverts one tool step. On the artist's RizomUV the viewports follow your work: load, unfold, optimize, pack, auto_seams and undo frame the result; use view to show the artist something in particular (a tile, islands, the selection, a 3D angle)."""
 
 PACK_DESCRIPTION = """\
-Pack the UV islands into the 0–1 tile, then measure the result independently (coverage and overlap are \
+Pack the UV islands into the tiles of the UV tile grid (the 0–1 tile unless the scene or columns/rows say \
+otherwise), then measure the result independently (coverage and overlap are \
 recomputed from the UVs, not taken from RizomUV's own report, which exceeds 1 when islands stack).
 Measured on a 2,573-island hard-surface scene — read before changing parameters:
 • map_resolution dominates once islands are many: at 2 px padding, 1024 → 2048 → 4096 gave coverage \
@@ -62,17 +63,24 @@ Measured on a 2,573-island hard-surface scene — read before changing parameter
 • keep_scale=true keeps the islands' size (a texel density set before stays); without it, Pack rescales them \
 to fill the tile.
 • distribute: before packing, spread the islands over the tiles, those outside the tile grid included, as the Pack button does when its 'Distribute in tiles' toggle is on; by default it follows that toggle (Prefs.Layout.Distribute, on unless the artist turned it off). distribute=false packs the islands that are in the tiles and leaves those outside where they are, as the button does with the toggle off.
-Pack takes ~10–25 s on 2.5k islands. One call = one undo step, two when it distributes first.
+• columns / rows: the UV tile grid (UDIM) to pack onto, set first as the UV Set panel's 'Grid (UDIM)' row \
+does (IslandGroups Mode SetMultiTileLayout on the RootGroup): columns=2, rows=1 packs onto tiles 1001 and \
+1002, in [0, 2] x [0, 1]. Either may be given alone; leaving both out keeps the scene's grid. The result's \
+tile_grid is the grid packed onto. With distribute (the default), the islands are spread over every tile.
+Pack takes ~10–25 s on 2.5k islands. One call = one undo step, one more when it distributes first and one \
+more when it changes the tile grid (undo_steps says how many).
 extra_params are deep-merged into RizomUV's Pack parameters (command_help('Pack') documents them); \
 the measured guidance is command_help('guide:packing')."""
 
 MEASURE_LINES = """\
-• coverage — share of the 0–1 tile covered by islands, rasterized at map_resolution (pixel centres); \
-1.0 would mean no empty space.
+• coverage — share of the tiles covered by islands, rasterized at map_resolution (pixel centres) tile by \
+tile over the scene's tile grid (tile_grid, [columns, rows]; the 0–1 tile alone by default) and averaged; 1.0 \
+would mean no empty space. With several tiles, coverage_per_tile gives each tile's.
 • uv_area — analytic sum of the island UV areas; above coverage when islands overlap or leave the tile.
 • overlap — pixels covered by two DIFFERENT islands, the island pairs involved and examples (overlap \
 inside one island, a triangulation artefact, is never counted).
-• outside_tile — islands whose bounds leave [0, 1].
+• outside_tile — islands whose bounds leave the tile grid ([0, columns] x [0, rows]).
+• across_tiles — with several tiles only: islands inside the grid that lie over a tile border.
 • island_size_px — mean / median / p10 island size in pixels at map_resolution.
 • tiny_islands — islands under 4 px across, and slivers under 2 px thick.
 • border_length_uv — total island border length in UV units (padding is paid along it).
@@ -541,6 +549,15 @@ def build_server(config) -> MCPServer:
         await _follow(session, progress, out)
         return out
 
+    async def _tile_grid(session, progress):
+        """The scene's UV tile grid (columns, rows), as the UV Set panel's 'Grid (UDIM)' row shows it."""
+        grid = []
+        for key in ("NU", "NV"):
+            n = await session.execute("Get", "Lib.Mesh.RootGroup.Properties." + key, label="Pack",
+                                      progress=progress)
+            grid.append(int(n) if isinstance(n, (int, float)) and not isinstance(n, bool) and n >= 1 else 1)
+        return tuple(grid)
+
     @mcp.tool(title="Pack", description=PACK_DESCRIPTION,
               annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
                                           open_world_hint=False))
@@ -555,6 +572,10 @@ def build_server(config) -> MCPServer:
             keep_scale: Annotated[bool, Field(description=(
                 "Move and turn the islands without scaling them, so a texel density set before is kept. "
                 "They may then not all fit in the tile."))] = False,
+            columns: Annotated[int | None, Field(description=(
+                "Tile grid columns (UDIM tiles along U) to pack onto. Default: the scene's."), ge=1, le=10)] = None,
+            rows: Annotated[int | None, Field(description=(
+                "Tile grid rows (UDIM tiles along V) to pack onto. Default: the scene's."), ge=1, le=100)] = None,
             distribute: Annotated[bool | None, Field(description=(
                 "Spread the islands over the tiles first, as the Pack button's 'Distribute in tiles' does. "
                 "Default: that toggle's setting in RizomUV."))] = None,
@@ -579,6 +600,20 @@ def build_server(config) -> MCPServer:
             pref = await session.execute("Get", "Prefs.Layout.Distribute", label="Pack", progress=progress)
             distribute = pref is not False
         t0 = time.perf_counter()
+        grid = await _tile_grid(session, progress)
+        grid_changed = False
+        wanted = (columns or grid[0], rows or grid[1])
+        if wanted != grid:
+            # What the UV Set panel's 'Grid (UDIM)' row queues (CFeatureUDims::ToModel), both numbers in
+            # one call: one undo step. It creates the tiles Tile_<col>_<row> the distribution then fills.
+            await session.execute("IslandGroups", {
+                "Mode": "SetMultiTileLayout", "GroupPath": "RootGroup",
+                "TileColumns": wanted[0], "TileRows": wanted[1]}, label="Pack", progress=progress)
+            grid_changed = True
+            grid = await _tile_grid(session, progress)
+            if grid != wanted:
+                raise ToolError("RizomUV did not take the tile grid %dx%d: it reports %dx%d."
+                                % (wanted[0], wanted[1], grid[0], grid[1]))
         if distribute:
             # What the Pack button queues first when nothing is selected (CFeaturePacking::ToModelButtons,
             # CreateDistributeParams with DIST_SHUFFLE | DIST_OUT_OF_TILES): the islands outside the tiles
@@ -594,8 +629,12 @@ def build_server(config) -> MCPServer:
             # the button without 'Distribute in tiles': the islands outside the tiles stay where they are
             params.pop("AuxGroup", None)
         await session.execute("Pack", params, label="Pack", progress=progress)
-        out = {"params": params, "distributed": bool(distribute), "undo_steps": 2 if distribute else 1,
+        out = {"params": params, "distributed": bool(distribute),
+               "tile_grid": {"columns": grid[0], "rows": grid[1], "changed": grid_changed},
+               "undo_steps": 1 + int(bool(distribute)) + int(grid_changed),
                "seconds": round(time.perf_counter() - t0, 2)}
+        if grid_changed:
+            out["tile_grid"]["command"] = "IslandGroups Mode=SetMultiTileLayout (undoable, its own undo step)"
         if not distribute:
             out["note"] = ("Not distributed: as with the Pack button when 'Distribute in tiles' is off, the islands "
                            "outside the tiles are left where they are.")

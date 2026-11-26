@@ -223,12 +223,21 @@ class Worker:
         return {"box": [float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1])],
                 "missing": wanted[~present].tolist()}
 
+    def _tile_grid(self):
+        """The UV tile grid (columns, rows) of the root group, as the UV Set panel's Grid (UDIM)
+        row sets it; (1, 1) when RizomUV does not say."""
+        grid = []
+        for key in ("NU", "NV"):
+            n = self._get_quiet("Lib.Mesh.RootGroup.Properties." + key)
+            grid.append(int(n) if isinstance(n, (int, float)) and not isinstance(n, bool) and n >= 1 else 1)
+        return tuple(grid)
+
     def op_measure(self, res=1024, padding_px=None, attached=False):
         from . import metrics
         snap = self._snapshot(attached)
         if snap.poly_sizes.size == 0:
             raise OpError("rizomuv", "There is no mesh in the scene: load one first.")
-        return metrics.measure(snap, int(res), padding_px)
+        return metrics.measure(snap, int(res), padding_px, tiles=self._tile_grid())
 
     def op_diagnose(self, res=1024, padding_px=None, attached=False, tmp_dir=None):
         from . import diagnose, objmesh
@@ -264,7 +273,7 @@ class Worker:
                 pass
         negative = float(negative) if isinstance(negative, (int, float)) and not isinstance(negative, bool) else None
         return diagnose.diagnose(snap, int(res), padding_px, mesh3d=mesh3d, negative_uv_area=negative,
-                                 notes=notes)
+                                 notes=notes, tiles=self._tile_grid())
 
     def op_render(self, path, size_px=1024, mode="islands", crop=None):
         size = int(size_px)

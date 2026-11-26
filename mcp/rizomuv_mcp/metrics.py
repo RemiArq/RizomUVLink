@@ -389,7 +389,7 @@ class UVSnapshot:
 _SHIFTS = (0.3183098861837907, 0.6180339887498949)
 
 
-def _confirmed_overlap(uv, tris, res, tri_island):
+def _confirmed_overlap(uv, tris, res, tri_island, origin=(0, 0)):
     """Between-island overlap that survives a sub-pixel shift of the pixel grid.
 
     On the centred grid, islands that merely touch along an edge falling exactly on pixel
@@ -402,7 +402,8 @@ def _confirmed_overlap(uv, tris, res, tri_island):
     best = None
     for frac in _SHIFTS:
         off = frac / res
-        r = rasterize_fast(uv, tris, res, box=(off, off, 1.0 + off, 1.0 + off), tri_island=tri_island)
+        u0, v0 = origin[0] + off, origin[1] + off
+        r = rasterize_fast(uv, tris, res, box=(u0, v0, u0 + 1.0, v0 + 1.0), tri_island=tri_island)
         if best is None or r["inter_island_overlap_px"] < best["inter_island_overlap_px"]:
             best = r
         if not best["inter_island_overlap_px"]:
@@ -415,14 +416,38 @@ def _r(x, digits):
     return None if x is None else round(float(x), digits)
 
 
+def _raster_tiles(uv, tris, res, tri_island, tiles):
+    """rasterize_fast over each unit tile of a columns x rows grid, plus the confirmation
+    of any overlap, tile by tile. Returns the per-tile coverages and the overlap summed over
+    the tiles (pixels, pairs and islands unioned)."""
+    cols, rows = tiles
+    coverages, pairs, islands = [], set(), set()
+    over_px, complete = 0, True
+    for r in range(rows):
+        for c in range(cols):
+            ras = rasterize_fast(uv, tris, res, box=(c, r, c + 1.0, r + 1.0), tri_island=tri_island)
+            if ras["inter_island_overlap_px"]:
+                ras.update(_confirmed_overlap(uv, tris, res, tri_island, origin=(c, r)))
+            coverages.append(((c, r), ras["coverage"]))
+            over_px += ras["inter_island_overlap_px"]
+            pairs.update(tuple(p) for p in ras["overlap_pairs"])
+            islands.update(ras["islands_in_overlap"])
+            complete = complete and ras["overlap_pairs_complete"]
+    return {"coverages": coverages, "inter_island_overlap_px": over_px,
+            "overlap_pairs": sorted(pairs), "overlap_pairs_complete": complete,
+            "islands_in_overlap": sorted(islands)}
+
+
 def measure(snap: UVSnapshot, res: int = 1024, padding_px: float | None = None, *,
-            exclude_islands=None, max_raster_res: int = MAX_RASTER_RES) -> dict:
+            exclude_islands=None, max_raster_res: int = MAX_RASTER_RES, tiles=(1, 1)) -> dict:
     """Coverage, overlap, out-of-tile, island sizes and padding share of a UV layout.
 
     `res` is the map resolution the layout is judged at (the pack's MapResolution);
     `padding_px` the padding it was packed with, when known. `exclude_islands` drops
     islands from every statistic (diagnose passes the zero-3D-area ones); they stay
-    counted in `islands` and are listed under `excluded_islands`.
+    counted in `islands` and are listed under `excluded_islands`. `tiles` is the UV tile
+    grid (columns, rows) of unit tiles from (0, 0): each tile is rasterized at `res`,
+    `coverage` is their mean, and only the islands leaving the grid are outside.
     """
     t0 = time.perf_counter()
     res = int(res)
@@ -439,9 +464,17 @@ def measure(snap: UVSnapshot, res: int = 1024, padding_px: float | None = None, 
     tris, tri_poly = tris[tri_keep], tri_poly[tri_keep]
     raster_res = min(res, int(max_raster_res))
     tri_island = pisl[tri_poly]
-    ras = rasterize_fast(uv, tris, raster_res, tri_island=tri_island)
-    if ras["inter_island_overlap_px"]:
-        ras.update(_confirmed_overlap(uv, tris, raster_res, tri_island))
+    cols, rows = max(1, int(tiles[0])), max(1, int(tiles[1]))
+    ntiles = cols * rows
+    if ntiles == 1:
+        ras = rasterize_fast(uv, tris, raster_res, tri_island=tri_island)
+        if ras["inter_island_overlap_px"]:
+            ras.update(_confirmed_overlap(uv, tris, raster_res, tri_island))
+        per_tile = None
+    else:
+        ras = _raster_tiles(uv, tris, raster_res, tri_island, (cols, rows))
+        per_tile = ras["coverages"]
+        ras["coverage"] = sum(cv for _, cv in per_tile) / ntiles
     st = island_stats_fast(uv, tris, tri_poly, pisl)
 
     coverage = ras["coverage"]
@@ -449,8 +482,9 @@ def measure(snap: UVSnapshot, res: int = 1024, padding_px: float | None = None, 
     bbox = st["bbox"]
     side_px = np.sqrt(area) * res
     thin_px = np.minimum(bbox[:, 2] - bbox[:, 0], bbox[:, 3] - bbox[:, 1]) * res
-    out_mask = ((bbox[:, 0] < -OUTSIDE_TILE_EPS) | (bbox[:, 1] < -OUTSIDE_TILE_EPS)
-                | (bbox[:, 2] > 1 + OUTSIDE_TILE_EPS) | (bbox[:, 3] > 1 + OUTSIDE_TILE_EPS))
+    eps = OUTSIDE_TILE_EPS
+    out_mask = ((bbox[:, 0] < -eps) | (bbox[:, 1] < -eps)
+                | (bbox[:, 2] > cols + eps) | (bbox[:, 3] > rows + eps))
     outside = st["islands"][out_mask]
 
     a, b, owner = border_edges(sizes, ids)
@@ -474,7 +508,7 @@ def measure(snap: UVSnapshot, res: int = 1024, padding_px: float | None = None, 
         "outside_tile": {"islands": int(outside.size),
                          "example_ids": [int(i) for i in outside[:20]]},
         "island_size_px": {
-            "mean": _r(np.sqrt(coverage * res * res / analysed), 1) if analysed else None,
+            "mean": _r(np.sqrt(coverage * ntiles * res * res / analysed), 1) if analysed else None,
             "median": _r(np.median(side_px), 1) if side_px.size else None,
             "p10": _r(np.percentile(side_px, 10), 1) if side_px.size else None,
         },
@@ -482,8 +516,17 @@ def measure(snap: UVSnapshot, res: int = 1024, padding_px: float | None = None, 
                          "slivers_under_2px": int(np.count_nonzero(thin_px < 2))},
         "border_length_uv": _r(border, 2),
         "padding_share_estimate": (None if padding_px is None
-                                   else _r(border * float(padding_px) / (2.0 * res), 3)),
+                                   else _r(border * float(padding_px) / (2.0 * res * ntiles), 3)),
+        "tile_grid": [cols, rows],
     }
+    if per_tile is not None:
+        result["coverage_per_tile"] = [{"tile": [c, r], "coverage": _r(cv, 4)} for (c, r), cv in per_tile]
+        # an island inside the grid but over a tile border gets texels from two tiles
+        lo = np.floor(bbox[:, :2] + eps)
+        hi = np.floor(bbox[:, 2:] - eps)
+        across = st["islands"][~out_mask & np.any(lo != hi, axis=1)]
+        result["across_tiles"] = {"islands": int(across.size),
+                                  "example_ids": [int(i) for i in across[:20]]}
     if not ras["overlap_pairs_complete"]:
         result["overlap"]["island_pairs_is_lower_bound"] = True
     if raster_res != res:
