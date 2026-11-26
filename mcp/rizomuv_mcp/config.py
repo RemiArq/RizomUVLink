@@ -19,6 +19,7 @@ class Config:
     launch_timeout: float = 180.0   # seconds a headless launch may take to answer
     log_level: str = "INFO"
     graph: str | None = None        # the node graph auto_seams runs (None: no auto_seams tool)
+    follow_view: bool = True        # frame the artist's viewports after the tools that change what they show
     link_worker: bool = False       # internal: this process is the link worker
 
 
@@ -67,6 +68,10 @@ def build_parser():
                                                  "(default 180) [env RIZOMUV_MCP_LAUNCH_TIMEOUT]")
     parser.add_argument("--graph", help="node graph file (.rzgraph.json) the auto_seams tool runs; without it "
                                         "the tool is not offered [env RIZOMUV_MCP_GRAPH]")
+    parser.add_argument("--no-follow-view", action="store_true", default=None,
+                        help="leave the viewports of the artist's RizomUV alone: by default they are framed "
+                             "on the result after load, unfold, optimize, pack, auto_seams, uv_sets and undo "
+                             "[env RIZOMUV_MCP_FOLLOW_VIEW=0]")
     parser.add_argument("--log-level", type=str.upper, choices=LOG_LEVELS,
                         help="stderr logging level (default INFO) [env RIZOMUV_MCP_LOG_LEVEL]")
     parser.add_argument("--link-worker", action="store_true", help=argparse.SUPPRESS)
@@ -95,8 +100,20 @@ def parse(argv=None, env=None):
     timeout = _timeout(timeout, src) if timeout is not None else 180.0
     level, src = pick(args.log_level, "LOG_LEVEL")
     level = _choice(level.upper(), LOG_LEVELS, src) if level else "INFO"
+    if args.no_follow_view:
+        follow_view = False
+    else:
+        value = env.get("RIZOMUV_MCP_FOLLOW_VIEW")
+        if value is None or not value.strip():
+            follow_view = True
+        elif value.strip().lower() in ("1", "true", "yes", "on"):
+            follow_view = True
+        elif value.strip().lower() in ("0", "false", "no", "off"):
+            follow_view = False
+        else:
+            raise ConfigError("RIZOMUV_MCP_FOLLOW_VIEW must be 1 or 0, not %r" % value)
     graph, _ = pick(args.graph, "GRAPH")
     # the client decides the server's working directory: a relative path or ~ is made absolute now
     graph = os.path.abspath(os.path.expanduser(graph)) if graph else None
     return Config(instance=instance, port=port, exe=exe, launch_timeout=timeout, log_level=level,
-                  graph=graph, link_worker=args.link_worker)
+                  graph=graph, follow_view=follow_view, link_worker=args.link_worker)

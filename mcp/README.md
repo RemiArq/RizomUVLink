@@ -59,6 +59,7 @@ the entry's `env`. `rizomuv-mcp --launcher-info` prints what it resolved (on std
 | `render_layout` | A PNG of the layout: island borders, or a distortion heat map; the whole tile or a zoom. |
 | `save` | Write the scene with its UVs to a new file. Your current file in RizomUV is left alone. |
 | `undo` | Undo the last steps. |
+| `view` | Move the camera of the 3D view, the UV view or both, sliding there: fit what is visible, the selection, the tile grid, one UV tile or some islands; put the 3D camera on an axis, turn it, zoom, pan. Only on your own RizomUV; nothing goes on the undo stack. |
 | `uv_sets` | List the UV sets (the current one, the texture of each), and duplicate, create, rename, delete or make one current. |
 | `transfer_texture` | Bake a texture from one UV set onto another, after a new unwrap: the image is resampled onto the new layout. |
 | `auto_seams` | Cut, unfold and pack the whole mesh with RizomUV's node graph, in one undo step. Offered only when the server is given a graph file (`--graph` or `RIZOMUV_MCP_GRAPH`); it needs a RizomUV whose node graph is on (`Prefs.Experimental.Graph`). The file is read at each call, so the graph can be changed without restarting. |
@@ -83,6 +84,10 @@ the UV coordinates, so they cannot repeat a mistake RizomUV would make about its
 * **On your instance, `run_command` only passes reads, undoable edits and undo.** Preferences, the
   window layout, arbitrary file writes and `Quit` are refused. A private headless instance is allowed
   more, since nothing there is yours.
+* **Your viewports follow its work.** After `load`, `unfold`, `optimize`, `pack`, `auto_seams`, a
+  change of the current UV set and `undo`, the UV view (and the 3D view after a load) slides to fit
+  the result, so you see what it did. A view you have collapsed in your layout is left alone.
+  `--no-follow-view` (or `RIZOMUV_MCP_FOLLOW_VIEW=0`) turns this off.
 * **One assistant per RizomUV.** A second server finds the instance taken and starts its own headless
   one instead: two clients on one RizomUVLink port would cross each other's answers.
 
@@ -107,7 +112,8 @@ then point the client at `boot.py` with the Python that has the matching RizomUV
 
 Options (command line, or the environment variable): `--instance auto|attach|headless`
 (`RIZOMUV_MCP_INSTANCE`), `--port <n>` (`RIZOMUV_MCP_PORT`, attach to an instance started with
-`-id <n>`), `--exe <path>` (`RIZOMUV_EXE`), `--launch-timeout <s>`, `--log-level`.
+`-id <n>`), `--exe <path>` (`RIZOMUV_EXE`), `--launch-timeout <s>`, `--log-level`,
+`--no-follow-view` (`RIZOMUV_MCP_FOLLOW_VIEW=0`).
 
 Tests: `python -m pytest mcp/tests` (the ones that drive RizomUV skip when no executable is found;
 `RIZOMUV_MCP_TEST_EXE` names one).

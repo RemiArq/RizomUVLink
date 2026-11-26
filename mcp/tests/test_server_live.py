@@ -17,7 +17,7 @@ from rizomuv_mcp.server import build_server
 
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose", "render_layout",
                   "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help", "cut", "weld",
-                  "optimize", "validate", "texel_density"}
+                  "optimize", "validate", "texel_density", "view"}
 
 
 def text(result):
@@ -53,8 +53,11 @@ def test_config_command_line_wins_over_the_environment():
     assert cfg.exe is None, "RIZOMUV_EXE is resolved by launch.find_rizomuv_exe, which names its source"
     cfg = parse(["--instance", "attach", "--port", "50200", "--exe", r"C:\x\rizomuv.exe", "--link-worker"], env=env)
     assert (cfg.instance, cfg.port, cfg.exe, cfg.link_worker) == ("attach", 50200, r"C:\x\rizomuv.exe", True)
+    assert parse([], env={"RIZOMUV_MCP_FOLLOW_VIEW": "0"}).follow_view is False
+    assert parse([], env={"RIZOMUV_MCP_FOLLOW_VIEW": "1"}).follow_view is True
+    assert parse(["--no-follow-view"], env={"RIZOMUV_MCP_FOLLOW_VIEW": "1"}).follow_view is False
     for bad in ({"RIZOMUV_MCP_PORT": "http"}, {"RIZOMUV_MCP_PORT": "70000"}, {"RIZOMUV_MCP_INSTANCE": "gui"},
-                {"RIZOMUV_MCP_LAUNCH_TIMEOUT": "-1"}):
+                {"RIZOMUV_MCP_LAUNCH_TIMEOUT": "-1"}, {"RIZOMUV_MCP_FOLLOW_VIEW": "maybe"}):
         with pytest.raises(ConfigError, match=next(iter(bad))):
             parse([], env=bad)
 
@@ -208,6 +211,8 @@ def test_attached_instance_is_refused_a_load_and_never_quit(snap_exe, isolated_d
                 r = await call(c, "run_command", {"command": "Set", "params": {"Path": "Vars.X", "Value": 1}})
                 assert r.is_error
                 assert data(await call(c, "unfold"))["params"]["WorkingSet"] == "Visible"
+                r = await call(c, "view", {"frame": "all"})
+                assert r.is_error and "headless" in text(r)
                 again = data(await call(c, "load", {"path": str(example_mesh), "replace_scene": True}))
                 assert again["scene"]["islands"] == 750
 
@@ -458,3 +463,72 @@ def test_auto_seams_runs_the_graph_it_is_set_up_with(snap_exe, isolated_dirs, ex
             assert r.is_error and "is not JSON" in text(r)
     anyio.run(go)
 
+
+
+def _quit(port):
+    async def go():
+        from rizomuv_mcp import session
+        worker = await session.spawn_worker()
+        try:
+            r = await worker.request("connect", {"port": port}, timeout=120)
+            assert r["ok"], r
+            r = await worker.request("quit_instance", timeout=30)
+            assert r["ok"], r
+        finally:
+            worker.kill()
+            await worker.wait_closed(5)
+    anyio.run(go)
+
+
+@pytest.mark.live
+def test_the_viewports_follow_the_tools_and_the_view_tool_moves_them(snap_exe, isolated_dirs, example_mesh):
+    """On a RizomUV on screen (not headless), the tools frame the viewports on their result, and the
+    view tool frames, zooms, pans and turns them; with follow_view off the tools leave them alone."""
+    inst = launch.launch_headless(snap_exe, headless=False)
+    try:
+        inst.wait_ready(180)
+
+        async def go():
+            async with Client(build_server(Config(port=inst.port))) as c:
+                loaded = data(await call(c, "load", {"path": str(example_mesh)}))
+                assert "UV" in loaded.get("view_framed", []), loaded
+                assert "UV" in data(await call(c, "unfold")).get("view_framed", [])
+                assert "UV" in data(await call(c, "pack", {"measure": False})).get("view_framed", [])
+
+                read = data(await call(c, "view"))
+                assert set(read) == {"3D", "UV"} and read["UV"]["Distance"] > 0
+
+                uv = data(await call(c, "view", {"tile": [1, 0], "animate_ms": 0}))["UV"]
+                assert uv["Target"][:2] == pytest.approx([1.5, 0.5]) and uv["Distance"] >= 1.1
+
+                zoomed = data(await call(c, "view", {"view": "UV", "zoom": 2, "animate_ms": 0}))["UV"]
+                assert zoomed["Distance"] == pytest.approx(uv["Distance"] / 2, rel=1e-6)
+                panned = data(await call(c, "view", {"view": "UV", "pan": {"right": 0.5}, "animate_ms": 0}))["UV"]
+                assert panned["Target"][0] - zoomed["Target"][0] == pytest.approx(0.5 * zoomed["Distance"], rel=1e-3)
+
+                isl = data(await call(c, "view", {"islands": [0, 1, 2], "animate_ms": 0}))["UV"]
+                assert 0.0 <= isl["Target"][0] <= 1.0 and 0.0 <= isl["Target"][1] <= 1.0
+                assert isl["Distance"] < uv["Distance"]
+
+                both = data(await call(c, "view", {"frame": "all", "animate_ms": 0}))
+                assert set(both) == {"3D", "UV"}
+                front = data(await call(c, "view", {"standard_view": "front", "animate_ms": 0}))["3D"]
+                turned = data(await call(c, "view", {"orbit": {"horizontal": 30}, "animate_ms": 0}))["3D"]
+                assert turned["Orientation"]["Horizontal"] != pytest.approx(front["Orientation"]["Horizontal"])
+                assert set(data(await call(c, "view", {"frame": "all"}))) == {"3D", "UV"}   # animated
+
+                for args, words in (({"view": "3D", "tile": [0, 0]}, "UV view"),
+                                    ({"view": "UV", "orbit": {"horizontal": 10}}, "3D view"),
+                                    ({"frame": "all", "tile": [0, 0]}, "give one of them"),
+                                    ({"islands": [10 ** 7]}, "None of these ids")):
+                    r = await call(c, "view", args)
+                    assert r.is_error and words in text(r), text(r)
+
+            async with Client(build_server(Config(port=inst.port, follow_view=False))) as c:
+                assert "view_framed" not in data(await call(c, "unfold"))
+
+        anyio.run(go)
+        _quit(inst.port)
+        assert inst.proc.wait(30) == 0
+    finally:
+        inst.terminate()

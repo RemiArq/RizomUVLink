@@ -572,7 +572,7 @@ class LaunchedInstance:
             pass
 
 
-def launch_headless(exe, *, port=None, owner_pid=None, user_dir=None, log_dir=None):
+def launch_headless(exe, *, port=None, owner_pid=None, user_dir=None, log_dir=None, headless=True):
     """Start `exe -id <port> -hl` and return at once; the caller waits for readiness
     (check_ready / wait_ready) so that it can report progress meanwhile.
 
@@ -582,6 +582,8 @@ def launch_headless(exe, *, port=None, owner_pid=None, user_dir=None, log_dir=No
     user_dir: RIZOMUV_USER_DIR of the instance (default: state_dir/userdir). A private one,
     because a second instance on the artist's user dir rotates the artist's command log.
     RIZOMUV_LOCAL_DIR is left alone: the licence pointer lives there.
+    headless=False shows the window (-bg: without taking the foreground), for the tests of what only
+    an instance on screen does, such as moving its viewports.
     """
     exe = Path(exe)
     owner_pid = os.getpid() if owner_pid is None else int(owner_pid)
@@ -608,7 +610,7 @@ def launch_headless(exe, *, port=None, owner_pid=None, user_dir=None, log_dir=No
         env["RIZOMUV_USER_DIR"] = str(user_dir)
         try:
             with open(log_path, "wb") as out:
-                proc, job = spawn_in_job([str(exe), "-id", str(port), "-hl"], cwd=str(exe.parent),
+                proc, job = spawn_in_job([str(exe), "-id", str(port), "-hl" if headless else "-bg"], cwd=str(exe.parent),
                                          env=env, stdout=out, stderr=subprocess.STDOUT)
         except OSError as e:
             raise LaunchError("Cannot start %s: %s" % (exe, e)) from e

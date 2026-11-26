@@ -207,6 +207,22 @@ class Worker:
         except OpError as e:
             log.warning("could not re-arm the unsaved-work flag: %s", e.message)
 
+    def op_uv_box(self, islands, attached=False):
+        """The UV bounding box [umin, vmin, umax, vmax] of the given islands, from a snapshot, and
+        the ids that name no island."""
+        import numpy as np
+        snap = self._snapshot(attached)
+        wanted = np.asarray(sorted({int(i) for i in islands}), np.int64)
+        present = np.isin(wanted, snap.poly_island_ids)
+        corner_island = np.repeat(snap.poly_island_ids, snap.poly_sizes)
+        corners = np.isin(corner_island, wanted)
+        if not corners.any():
+            return {"box": None, "missing": wanted.tolist()}
+        uv = snap.uv[snap.poly_uvw_ids[corners]]
+        lo, hi = uv.min(axis=0), uv.max(axis=0)
+        return {"box": [float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1])],
+                "missing": wanted[~present].tolist()}
+
     def op_measure(self, res=1024, padding_px=None, attached=False):
         from . import metrics
         snap = self._snapshot(attached)

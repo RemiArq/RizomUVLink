@@ -16,6 +16,7 @@ import difflib
 import itertools
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -45,7 +46,7 @@ RizomUV the artist has open -- their live scene -- or, if none is open, starts a
 render_layout -> save. Numbers rank layouts; images explain them -- the eye ranks layouts badly. Do not \
 iterate on pack parameters to chase tenths of a percent: call diagnose and act on its findings. On the \
 artist's instance: never load over their scene without asking, save to new files, and remember that \
-undo reverts one tool step."""
+undo reverts one tool step. On the artist's RizomUV the viewports follow your work: load, unfold, optimize, pack, auto_seams and undo frame the result; use view to show the artist something in particular (a tile, islands, the selection, a 3D angle)."""
 
 PACK_DESCRIPTION = """\
 Pack the UV islands into the 0–1 tile, then measure the result independently (coverage and overlap are \
@@ -160,6 +161,13 @@ Pack takes ~10–25 s on 2.5k islands (1024: ~10 s, 2048: ~18–20 s, padding 0:
 CANONICAL_PACK = {"RootGroup": "RootGroup", "AuxGroup": "RootGroup", "WorkingSet": "Visible", "Translate": True, "Scaling": {"Mode": 2},
                   "LayoutScalingMode": 2, "RecursionDepth": 1, "ProcessTileSelection": False,
                   "UsePixelUnit": True}
+
+# The camera slides to its new place rather than jumping: in milliseconds, for the framing that
+# follows a tool, and for the view tool by default.
+FOLLOW_ANIMATE_MS = 300
+VIEW_ANIMATE_MS = 400
+# Room left around what is framed by a box (a tile, islands), as the A key leaves some.
+FRAME_MARGIN = 1.1
 
 _MAX_MUTATIONS = ("MaxMutations above 1 is refused: above a few hundred islands it burns minutes for no gain "
                   "(measured on a 2,573-island scene). Coverage moves with map_resolution and padding_px; "
@@ -292,6 +300,43 @@ def build_server(config) -> MCPServer:
     def session_of(ctx) -> Session:
         return ctx.request_context.lifespan_context
 
+    # -------------------------------------------------------------- the viewports
+
+    def _on_screen(session):
+        """The artist's RizomUV, the only one with viewports to look at."""
+        return session.attached and not session.headless
+
+    async def _camera(session, progress, view, params=None):
+        state = await session.execute("ViewCamera", dict(params or {}, View=view) if params else view,
+                                      label="View %s" % view, progress=progress)
+        if isinstance(state, dict) and "Error" in state:
+            err = state["Error"]
+            raise ToolError("RizomUV refused the %s camera: %s" % (view, err.get("Msg", err) if isinstance(err, dict) else err))
+        if not isinstance(state, dict):
+            raise ToolError("ViewCamera returned %r for the %s view." % (state, view))
+        return state
+
+    def _shown(state):
+        size = state.get("ViewportSize") or {}
+        return (size.get("Width") or 0) > 0 and (size.get("Height") or 0) > 0
+
+    async def _follow(session, progress, out, views=("UV",)):
+        """After a tool that changed what the viewports show, frame them on the result, sliding there,
+        so that the artist watching sees it. Only on the artist's own RizomUV, only views on screen,
+        and never with --no-follow-view. A camera that cannot be moved costs the tool nothing."""
+        if not config.follow_view or not _on_screen(session):
+            return
+        framed = []
+        for view in views:
+            try:
+                if _shown(await _camera(session, progress, view)):
+                    await _camera(session, progress, view, {"Frame": "All", "Animate": FOLLOW_ANIMATE_MS})
+                    framed.append(view)
+            except ToolError as e:
+                log.info("could not frame the %s view: %s", view, e)
+        if framed:
+            out["view_framed"] = framed
+
     # -------------------------------------------------------------- session
 
     @mcp.tool(title="RizomUV session", description=(
@@ -370,6 +415,7 @@ def build_server(config) -> MCPServer:
         out["seconds"] = seconds
         if session.attached:
             out["note"] = "Loaded into the artist's RizomUV: the scene they had open was replaced."
+        await _follow(session, progress, out, ("3D", "UV"))
         return out
 
     @mcp.tool(title="Unfold", description=(
@@ -395,6 +441,7 @@ def build_server(config) -> MCPServer:
             rest = {k: v for k, v in result.items() if k != "BijectionFailedIslandIDs"}
             if rest:
                 out["rizomuv_result"] = rest
+        await _follow(session, progress, out)
         return out
 
     EdgeCouple = Annotated[list[int], Field(min_length=2, max_length=2)]
@@ -470,6 +517,7 @@ def build_server(config) -> MCPServer:
         out = {"params": params, "seconds": round(time.perf_counter() - t0, 2)}
         if isinstance(result, dict) and result:
             out["rizomuv_result"] = result
+        await _follow(session, progress, out)
         return out
 
     @mcp.tool(title="Pack", description=PACK_DESCRIPTION,
@@ -505,6 +553,7 @@ def build_server(config) -> MCPServer:
         t0 = time.perf_counter()
         await session.execute("Pack", params, label="Pack", progress=progress)
         out = {"params": params, "seconds": round(time.perf_counter() - t0, 2)}
+        await _follow(session, progress, out)
         res = params.get("MapResolution")
         pad = params.get("PaddingSizePx") if params.get("UsePixelUnit") else None
         session.last_pack = {"map_resolution": int(res) if isinstance(res, (int, float)) else map_resolution,
@@ -581,6 +630,7 @@ def build_server(config) -> MCPServer:
             # flipped triangles goes down Rest): the measure below is the verdict on the result.
             out["stage_warnings"] = len(report.get("Warnings") or [])
             out["scene"] = await session.scene(progress)
+            await _follow(session, progress, out)
             if measure:
                 try:
                     out["measure"] = await session.op("measure", {"res": 1024, "padding_px": None,
@@ -809,6 +859,129 @@ def build_server(config) -> MCPServer:
 
     # -------------------------------------------------------------- output, history
 
+    def _fit_distance(state, width, height):
+        """The orthographic distance (the world height the view shows) that holds a width x height
+        box, with FRAME_MARGIN around it."""
+        size = state.get("ViewportSize") or {}
+        aspect = (size.get("Width") or 1) / max(size.get("Height") or 1, 1)
+        return FRAME_MARGIN * max(height, width / aspect, 1e-6)
+
+    def _visible_height(state):
+        """The world height the view shows at its target: what a pan of 1 view height moves."""
+        distance = float(state.get("Distance") or 0.0)
+        if state.get("Perspective"):
+            return 2.0 * distance * math.tan(math.radians(float(state.get("FOV") or 45.0)) / 2.0)
+        return distance
+
+    def _camera_out(state):
+        keep = ("Target", "Distance", "Orientation", "Perspective", "FOV", "ViewportSize")
+        return {k: state[k] for k in keep if k in state}
+
+    @mcp.tool(title="Move the view", description=(
+        "Move the camera of RizomUV's 3D view, UV view or both, sliding there (animate_ms, 0 jumps), so that "
+        "the artist sees what you are talking about. Only on the artist's own RizomUV: a headless one has no "
+        "screen. Nothing in the scene changes and nothing goes on the undo stack. "
+        "frame: 'all' fits what is visible (the A key), 'selection' the selection (the F key), 'tile' the tile "
+        "grid (UV only). tile=[u, v] shows that UV tile (UDIM 1001 is [0, 0]). islands=[ids] fits these islands "
+        "in the UV view (the 3D view cannot frame islands: use frame='selection' on a selection). standard_view "
+        "puts the 3D camera on an axis. orbit turns the 3D camera around its target, in degrees. zoom > 1 comes "
+        "closer (2 = twice as close), < 1 goes back. pan moves along the screen, in view heights (right=0.5 "
+        "moves half a view to the right). perspective switches the 3D view's projection. They apply in this "
+        "order: the framing (frame, tile or islands), standard_view, orbit, zoom, pan. A view hidden in the "
+        "artist's layout is left alone and reported. Returns each view's camera after the move."),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                                    open_world_hint=False))
+    @_guard
+    async def view(
+            view: Annotated[Literal["3D", "UV", "both"] | None, Field(
+                description="The view to move. Default: both, or the one the arguments are for (tile and "
+                            "islands are UV, standard_view, orbit and perspective are 3D).")] = None,
+            frame: Annotated[Literal["all", "selection", "tile"] | None, Field(
+                description="all: what is visible; selection: the selection; tile: the tile grid (UV).")] = None,
+            tile: Annotated[list[int] | None, Field(
+                description="[u, v] of the UV tile to show; [0, 0] is the 0-1 tile (UDIM 1001).",
+                min_length=2, max_length=2)] = None,
+            islands: Annotated[list[int] | None, Field(
+                description="Island ids to fit in the UV view.", min_length=1)] = None,
+            standard_view: Annotated[Literal["top", "bottom", "front", "rear", "left", "right"] | None, Field(
+                description="Put the 3D camera on this axis view.")] = None,
+            orbit: Annotated[dict[Literal["horizontal", "vertical"], float] | None, Field(
+                description="Turn the 3D camera around its target, in degrees: {horizontal, vertical}.")] = None,
+            zoom: Annotated[float | None, Field(description="> 1 comes closer, < 1 goes back.", gt=0)] = None,
+            pan: Annotated[dict[Literal["right", "up"], float] | None, Field(
+                description="Move along the screen, in view heights: {right, up}.")] = None,
+            perspective: Annotated[bool | None, Field(description="3D: perspective or orthographic.")] = None,
+            animate_ms: Annotated[int, Field(description="Time to slide there, in ms; 0 jumps.",
+                                             ge=0, le=5000)] = VIEW_ANIMATE_MS,
+            ctx: Context = None) -> dict[str, Any]:
+        session, progress = session_of(ctx), _reporter(ctx)
+        await session.ensure(progress)
+        if not _on_screen(session):
+            raise ToolError("This RizomUV is headless: it has no viewport to move. The view tool drives the "
+                            "artist's own RizomUV; render_layout shows a headless layout.")
+        if sum(x is not None for x in (frame, tile, islands)) > 1:
+            raise ToolError("frame, tile and islands each choose what to fit: give one of them.")
+        uv_only = tile is not None or islands is not None or frame == "tile"
+        only_3d = standard_view is not None or orbit is not None or perspective is not None
+        if view is None:
+            view = "UV" if uv_only and not only_3d else "3D" if only_3d and not uv_only else "both"
+        views = ("3D", "UV") if view == "both" else (view,)
+        if view == "3D" and uv_only:
+            raise ToolError("tile, islands and frame='tile' are for the UV view, not the 3D one.")
+        if view == "UV" and only_3d:
+            raise ToolError("standard_view, orbit and perspective are for the 3D view; the UV view never turns.")
+        if not any((frame, tile, islands, standard_view, orbit, zoom, pan, perspective is not None)):
+            # a plain read
+            return {name: _camera_out(await _camera(session, progress, name)) for name in views}
+
+        box = None
+        out = {}
+        if islands is not None:
+            r = await session.op("uv_box", {"islands": islands, "attached": session.attached},
+                                 label="Island bounds", progress=progress)
+            if r.get("missing"):
+                out["missing_islands"] = r["missing"][:50]
+            if r.get("box") is None:
+                raise ToolError("None of these ids is an island of the scene (it has %s islands)."
+                                % (await session.scene(progress)).get("islands"))
+            box = r["box"]
+        elif tile is not None:
+            box = [float(tile[0]), float(tile[1]), float(tile[0]) + 1.0, float(tile[1]) + 1.0]
+
+        for name in views:
+            state = await _camera(session, progress, name)
+            if not _shown(state):
+                out[name] = {"skipped": "the %s view is not on screen in the artist's layout" % name}
+                continue
+            params = {"Animate": animate_ms}
+            if name == "UV" and box is not None:
+                params["Target"] = [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2, 0.0]
+                params["Distance"] = _fit_distance(state, box[2] - box[0], box[3] - box[1])
+            elif frame == "tile" and name == "3D":
+                pass   # the 3D view has no tile grid: with view=both only the UV view frames it
+            elif frame:
+                params["Frame"] = frame.capitalize()
+            if name == "3D":
+                if standard_view:
+                    params["StandardView"] = standard_view.capitalize()
+                if orbit:
+                    params["Orbit"] = {"Horizontal": float(orbit.get("horizontal", 0.0)),
+                                       "Vertical": float(orbit.get("vertical", 0.0))}
+                if perspective is not None:
+                    params["Perspective"] = bool(perspective)
+            if zoom:
+                params["Zoom"] = float(zoom)
+            if len(params) > 1:
+                state = await _camera(session, progress, name, params)
+            if pan:
+                # in view heights of the camera just reached, which the previous call returned
+                h = _visible_height(state)
+                state = await _camera(session, progress, name, {
+                    "Pan": {"Right": float(pan.get("right", 0.0)) * h, "Up": float(pan.get("up", 0.0)) * h},
+                    "Animate": animate_ms})
+            out[name] = _camera_out(state)
+        return out
+
     @mcp.tool(title="Save", description=(
         "Save the scene with its UVs to a NEW file; the format follows the extension (.obj, .fbx, .usd...). "
         "path must be absolute; an existing file is refused unless overwrite=true. The artist's current file "
@@ -902,6 +1075,8 @@ def build_server(config) -> MCPServer:
             session.last_pack = None   # the last pack was of another layout
         out = await _uv_sets_state(session, progress)
         out["done"] = "%s %s" % (action, name)
+        if action == "set_current":
+            await _follow(session, progress, out)
         return out
 
     @mcp.tool(title="Transfer a texture", description=(
@@ -1007,6 +1182,7 @@ def build_server(config) -> MCPServer:
         if session.attached:
             out["note"] = ("This is the artist's RizomUV: if they worked in it since your last call, their own "
                            "last action was undone.")
+        await _follow(session, progress, out)
         return out
 
     @mcp.tool(title="Run a RizomUV command", description=(
