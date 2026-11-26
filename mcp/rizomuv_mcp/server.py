@@ -170,6 +170,8 @@ FOLLOW_ANIMATE_MS = 300
 VIEW_ANIMATE_MS = 400
 # Room left around what is framed by a box (a tile, islands), as the A key leaves some.
 FRAME_MARGIN = 1.1
+# How long a camera call waits for a view RizomUV is still creating at startup, in seconds.
+VIEW_CREATION_WAIT_S = 3.0
 
 _MAX_MUTATIONS = ("MaxMutations above 1 is refused: above a few hundred islands it burns minutes for no gain "
                   "(measured on a 2,573-island scene). Coverage moves with map_resolution and padding_px; "
@@ -322,6 +324,23 @@ def build_server(config) -> MCPServer:
         size = state.get("ViewportSize") or {}
         return (size.get("Width") or 0) > 0 and (size.get("Height") or 0) > 0
 
+    def _not_created(error):
+        # CCommandViewCamera: the viewport has no GL canvas yet. RizomUV opens its link port before the
+        # startup sequence has built the viewports, so a client that starts it, or attaches right after
+        # it started, can be faster than the views.
+        return "does not exist yet" in str(error)
+
+    async def _camera_when_created(session, progress, view, wait_s=VIEW_CREATION_WAIT_S):
+        """The camera state, waiting a moment for a view still being created at startup."""
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                return await _camera(session, progress, view)
+            except ToolError as e:
+                if not _not_created(e) or time.monotonic() >= deadline:
+                    raise
+            await anyio.sleep(0.25)
+
     async def _follow(session, progress, out, views=("UV",)):
         """After a tool that changed what the viewports show, frame them on the result, sliding there,
         so that the artist watching sees it. Only on the artist's own RizomUV, only views on screen,
@@ -331,7 +350,7 @@ def build_server(config) -> MCPServer:
         framed = []
         for view in views:
             try:
-                if _shown(await _camera(session, progress, view)):
+                if _shown(await _camera_when_created(session, progress, view)):
                     await _camera(session, progress, view, {"Frame": "All", "Animate": FOLLOW_ANIMATE_MS})
                     framed.append(view)
             except ToolError as e:
@@ -957,9 +976,22 @@ def build_server(config) -> MCPServer:
             raise ToolError("tile, islands and frame='tile' are for the UV view, not the 3D one.")
         if view == "UV" and only_3d:
             raise ToolError("standard_view, orbit and perspective are for the 3D view; the UV view never turns.")
+        NOT_CREATED = ("the %s view is not created yet: RizomUV is still starting (its link opens before its "
+                       "viewports); call view again in a moment")
+
+        async def read(name):
+            try:
+                return await _camera_when_created(session, progress, name)
+            except ToolError as e:
+                if _not_created(e):
+                    return None
+                raise
+
         if not any((frame, tile, islands, standard_view, orbit, zoom, pan, perspective is not None)):
             # a plain read
-            return {name: _camera_out(await _camera(session, progress, name)) for name in views}
+            states = {name: await read(name) for name in views}
+            return {name: _camera_out(st) if st is not None else {"skipped": NOT_CREATED % name}
+                    for name, st in states.items()}
 
         box = None
         out = {}
@@ -976,7 +1008,10 @@ def build_server(config) -> MCPServer:
             box = [float(tile[0]), float(tile[1]), float(tile[0]) + 1.0, float(tile[1]) + 1.0]
 
         for name in views:
-            state = await _camera(session, progress, name)
+            state = await read(name)
+            if state is None:
+                out[name] = {"skipped": NOT_CREATED % name}
+                continue
             if not _shown(state):
                 out[name] = {"skipped": "the %s view is not on screen in the artist's layout" % name}
                 continue
