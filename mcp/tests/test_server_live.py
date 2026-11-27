@@ -17,7 +17,7 @@ from rizomuv_mcp.server import build_server
 
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose", "render_layout",
                   "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help", "cut", "weld",
-                  "optimize", "validate", "texel_density", "view", "controls"}
+                  "optimize", "validate", "texel_density", "view", "controls", "maps"}
 
 
 def text(result):
@@ -797,4 +797,60 @@ def test_controls_reads_the_bindings_in_effect(snap_exe, isolated_dirs):
             assert "CustomMousePreset" in guide["text"]
             got = data(await call(c, "run_command", {"command": "Get", "params": "Controls.MousePresetMode"}))
             assert got["result"] == 0 and "controls tool" in got["note"]
+    anyio.run(go)
+
+
+@pytest.mark.live
+def test_maps_read_fill_reset_invert_and_occlusion(snap_exe, isolated_dirs, example_mesh):
+    """The Density and Protect maps, read and edited by IDs, by working set and from the occlusion,
+    each edit one undo step."""
+    def island(m, i):
+        return next((r for r in (m.get("islands_painted") or {}).get("islands", []) if r["island"] == i), None)
+
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            data(await call(c, "load", {"path": str(example_mesh)}))
+            m = data(await call(c, "maps", {"map": "Density"}))["map"]
+            assert (m["per"], m["neutral"], m["range"], m["painted"]) == ("polygon", 1.0, [0.1, 4.0], 0), m
+            polygons = m["primitives"]
+            p = data(await call(c, "maps", {"map": "Protect"}))["map"]
+            assert (p["per"], p["neutral"], p["range"], p["painted"]) == ("vertex", 0.0, [-1.0, 1.0], 0), p
+
+            # fill by island, clamped to the map's range
+            r = data(await call(c, "maps", {"map": "Density", "action": "fill", "value": 10, "island_ids": [0]}))
+            assert r["edit"]["filled"]["value"] == 4.0 and r["edit"]["filled"]["islands"]["ids"] == [0], r
+            row = island(r["map"], 0)
+            assert row and row["painted_share"] == 1.0 and row["min"] == row["max"] == 4.0, r["map"]
+            assert r["map"]["islands_painted"]["count"] == 1
+
+            # invert the working set: 4 -> 0.25 on island 0, the neutral 1 stays 1 elsewhere
+            r = data(await call(c, "maps", {"map": "Density", "action": "invert"}))
+            assert island(r["map"], 0)["max"] == 0.25 and r["map"]["islands_painted"]["count"] == 1, r["map"]
+            data(await call(c, "undo"))
+            assert island(data(await call(c, "maps", {"map": "Density"}))["map"], 0)["max"] == 4.0
+
+            # fill by polygon: a vertex map gets the value on their vertices
+            r = data(await call(c, "maps", {"map": "Protect", "action": "fill", "value": 1, "poly_ids": [0, 1]}))
+            assert r["edit"]["filled"]["polygons"] == 2, r
+            assert r["map"]["painted"] >= 3 and r["map"]["painted_values"]["min"] == 1.0, r["map"]
+            r = data(await call(c, "maps", {"map": "Protect", "action": "reset", "poly_ids": [0, 1]}))
+            assert r["map"]["painted"] == 0, r["map"]
+
+            # occlusion over the working set, within the requested values
+            r = data(await call(c, "maps", {"map": "Density", "action": "occlusion", "rays": 16}))
+            assert r["edit"]["params"]["Occlusion"]["ValueAtOccluded"] == 0.5
+            pv = r["map"]["painted_values"]
+            assert 0.5 - 1e-9 <= pv["min"] <= pv["max"] <= 1.0 + 1e-9, r["map"]
+            assert r["map"]["painted"] > 0 and r["map"]["primitives"] == polygons
+
+            # a whole reset brings every island back to neutral
+            r = data(await call(c, "maps", {"map": "Density", "action": "reset"}))
+            assert r["map"]["painted"] == 0, r["map"]
+
+            r = await call(c, "maps", {"map": "Density", "action": "fill"})
+            assert r.is_error and "needs value" in text(r)
+            r = await call(c, "maps", {"map": "Density", "action": "fill", "value": 2, "poly_ids": [10 ** 7]})
+            assert r.is_error and "polygon 10000000" in text(r), text(r)
+            r = await call(c, "maps", {"map": "Density", "action": "invert", "island_ids": [0]})
+            assert r.is_error and "working set" in text(r)
     anyio.run(go)

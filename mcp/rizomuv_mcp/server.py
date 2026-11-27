@@ -115,6 +115,37 @@ average texel density (grey = none, red/blue = stretched/compressed). crop=[umin
 zooms on part of the UV space (other UDIM tiles too); the longer side of the image is size_px. \
 Image row 0 is the top of the tile (v max). The 20 newest renders are kept in the server's folder."""
 
+MAPS_DESCRIPTION = """\
+Read or edit the two maps RizomUV unwraps by, painted on the mesh:
+• Density (per polygon, 0.1 to 4, 1 neutral): how much texel density a polygon gets relative to its 3D size. \
+Above 1 the zone gets more pixels, below 1 fewer. Read by unfold and optimize, which flatten each triangle \
+towards its 3D size times the value: that shares an island's area out between its parts, while an island \
+painted all over keeps its size there. Read by pack when it rescales (keep_scale=false): an island is sized by \
+its 3D area times the square of its average value, so 2 on a whole island packs it 4x larger in area. Lower it \
+on hidden or unimportant parts, raise it on faces, labels, details.
+• Protect (per vertex, -1 to 1, 0 neutral): 1 keeps seams away from a zone, -1 draws them in. Read by \
+the Auto Seams of RizomUV's Seams panel and by its shortest-path edge selection, so by the artist's own \
+seam work; the node graph of the auto_seams tool does not read it. Protect what the viewer sees; attract \
+seams into creases and hidden sides.
+action='read' (the default) returns what the map holds: how much is painted away from neutral, the \
+spread of the values and the islands holding them. Every edit returns the same read afterwards.
+action='fill' sets value on the islands island_ids and the polygons poly_ids (a Protect fill reaches their \
+vertices), or on the whole working set when neither is given; IDs outside the working set are ignored. \
+action='reset' brings the same targets back to neutral (the whole working set without IDs). \
+action='invert' inverts the working set (Density v -> 1/v, Protect v -> -v). \
+action='occlusion' fills the working set from the ambient occlusion of the 3D mesh, exposed_value on open \
+surfaces and occluded_value in creases, as the Brush panel's Generate button does: Density 1 -> 0.5 gives hidden \
+parts half the texel density, Protect 0 -> -1 sends the seams into the creases. It takes seconds on large \
+meshes; more rays or a longer max_distance cost more.
+With the symmetry on, edits reach the symmetric side too. The UVs are not changed: call unfold or optimize \
+(Density) afterwards. One edit = one undo step."""
+
+MAP_EFFECT = {
+    "Density": "The UVs are not changed yet: optimize (or unfold) flattens with the new density, and pack "
+               "sizes the islands by it when it rescales (keep_scale=false).",
+    "Protect": "The seams are not changed: the map steers the Auto Seams of RizomUV's Seams panel and its "
+               "shortest-path edge selection (not the node graph of auto_seams)."}
+
 GUIDE_PACKING = """\
 # Packing UVs with RizomUV: what moves the numbers
 
@@ -1050,6 +1081,102 @@ def build_server(config) -> MCPServer:
                           "scale_factor": factor}
             out["note"] = "Islands were scaled about their centres: pack(keep_scale=true) before saving."
         out.update(await _density_report(session, progress, unit, scene_unit, rez, tolerance_pct))
+        return out
+
+    # The Occlusion defaults of the Brush panel (CAppVars.cpp, Maps.Occlusion.*): gentler than the
+    # library's own full-strength ones (Density 1 -> 0.1), which a first try should not get.
+    OCCLUSION_DEFAULTS = {"Density": (1.0, 0.5), "Protect": (0.0, -1.0)}
+
+    @mcp.tool(title="Density and Protect maps", description=MAPS_DESCRIPTION,
+              annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False,
+                                          open_world_hint=False))
+    @_guard
+    async def maps(
+            map: Annotated[Literal["Density", "Protect"], Field(description="The map to read or edit.")],
+            action: Annotated[Literal["read", "fill", "reset", "invert", "occlusion"], Field(
+                description="read, fill, reset, invert, or occlusion.")] = "read",
+            value: Annotated[float | None, Field(description=(
+                "fill: the value to set. Density 0.1-4 (1 neutral), Protect -1-1 (0 neutral)."))] = None,
+            island_ids: Annotated[list[int] | None, Field(description="fill/reset: islands, by island ID.")] = None,
+            poly_ids: Annotated[list[int] | None, Field(description=(
+                "fill/reset: polygons, by ID in the order of the file (in an OBJ, the n-th 'f' line, from 0)."))] = None,
+            working_set: Annotated[str, Field(description=(
+                "RizomUV WorkingSet the edit acts on: Visible (default) or Selected."))] = "Visible",
+            exposed_value: Annotated[float | None, Field(description=(
+                "occlusion: value on fully exposed surfaces. Default Density 1, Protect 0."))] = None,
+            occluded_value: Annotated[float | None, Field(description=(
+                "occlusion: value in fully occluded creases. Default Density 0.5, Protect -1."))] = None,
+            rays: Annotated[int, Field(description="occlusion: rays per vertex (stratified).", ge=1, le=1024)] = 32,
+            max_distance: Annotated[float, Field(description=(
+                "occlusion: ray length as a fraction of the mesh bounding box diagonal; 0 = unbounded."),
+                ge=0, le=10)] = 0.5,
+            contrast: Annotated[float, Field(description=(
+                "occlusion: gamma on the occlusion; above 1 keeps the effect in the deepest creases."),
+                gt=0, le=10)] = 1.0,
+            occlude_with_all_visible: Annotated[bool, Field(description=(
+                "occlusion: rays are blocked by every visible island, not only by the working set."))] = True,
+            ctx: Context = None) -> dict[str, Any]:
+        session, progress = session_of(ctx), _reporter(ctx)
+        scene = await session.scene(progress)
+        if not scene.get("has_mesh"):
+            raise ToolError("No mesh is loaded: call load first.")
+        out = {}
+        if action != "read":
+            params = {"MapName": map, "WorkingSet": working_set}
+            targeted = bool(island_ids) or bool(poly_ids)
+            if action in ("fill", "reset"):
+                if action == "fill" and value is None:
+                    raise ToolError("action='fill' needs value.")
+                if targeted or action == "fill":
+                    # A reset of named primitives is a fill with the neutral value: PaintMap's own
+                    # Reset clears whole islands.
+                    if action == "reset":
+                        value = (await session.execute("Get", "Lib.Mesh.Maps.%s.DefaultValue" % map,
+                                                       label="Maps", progress=progress))
+                    params.update({"PaintMode": 4, "Fill": {"Value": float(value)}})
+                    if island_ids:
+                        params["Fill"]["IslandIDs"] = [int(i) for i in island_ids]
+                    if poly_ids:
+                        params["Fill"]["PolyIDs"] = [int(i) for i in poly_ids]
+                else:
+                    params["PaintMode"] = 0
+            elif targeted:
+                raise ToolError("island_ids and poly_ids are for fill and reset; %s acts on the working set "
+                                "(working_set='Selected' for the selection)." % action)
+            elif action == "invert":
+                params["PaintMode"] = 2
+            else:
+                exp_default, occ_default = OCCLUSION_DEFAULTS[map]
+                params.update({"PaintMode": 3, "Occlusion": {
+                    "RayNum": rays, "MaxDistRatio": max_distance, "Contrast": contrast,
+                    "ValueAtExposed": exp_default if exposed_value is None else exposed_value,
+                    "ValueAtOccluded": occ_default if occluded_value is None else occluded_value,
+                    "OccludeWithAllVisible": occlude_with_all_visible}})
+            t0 = time.perf_counter()
+            try:
+                result = await session.execute("PaintMap", params, label="Editing the %s map" % map,
+                                               progress=progress, timeout_ms=600000)
+            except ToolError as e:
+                if "Fill" in str(e) and "not recognized" in str(e):
+                    raise ToolError("This RizomUV cannot fill a map by IDs (PaintMap Fill): it is older than "
+                                    "this tool needs. reset, invert and occlusion still work.") from None
+                raise
+            if isinstance(result, dict) and "Error" in result:
+                err = result["Error"]
+                raise ToolError("RizomUV refused to edit the %s map: %s" % (
+                    map, err.get("Msg", err) if isinstance(err, dict) else err))
+            out["edit"] = {"action": action, "params": params, "seconds": round(time.perf_counter() - t0, 2)}
+            fill = (result or {}).get("Fill") if isinstance(result, dict) else None
+            if isinstance(fill, dict):
+                out["edit"]["filled"] = {"value": fill.get("Value"), "polygons": fill.get("PolygonCount"),
+                                         "islands": _ids(fill.get("IslandIDs"))}
+                if fill.get("PolygonCount") == 0:
+                    out["edit"]["warning"] = ("Nothing was filled: the IDs name nothing in the working set "
+                                              "(%s)." % working_set)
+            session.last_pack = None
+            out["note"] = MAP_EFFECT[map]
+        out["map"] = await session.op("map_values", {"name": map, "attached": session.attached},
+                                      label="Reading the %s map" % map, progress=progress)
         return out
 
     @mcp.tool(title="Render the layout", description=RENDER_DESCRIPTION,

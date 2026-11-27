@@ -233,6 +233,71 @@ class Worker:
         return {"box": [float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1])],
                 "missing": wanted[~present].tolist()}
 
+    def op_map_values(self, name, attached=False, island_limit=30):
+        """What a map (Density, Protect...) holds: its descriptor, how much of the mesh is painted
+        away from the neutral value, the spread of the painted values and the islands that hold
+        them. Read with Save({"MapValues"}) next to the index table of the map's primitives."""
+        import numpy as np
+        # field by field: the CDataMap node itself does not deserialize on the client side
+        base = "Lib.Mesh.Maps." + name
+        desc = {k: self._get_quiet(base + "." + k)
+                for k in ("PrimType", "DefaultValue", "MinValue", "MaxValue", "ScaleType")}
+        if desc["PrimType"] is None:
+            raise OpError("rizomuv", "The mesh has no map named %s." % name)
+        prim = desc.get("PrimType", "Vertex")
+        table = "PolygonIDsToIslandIDs" if prim == "Polygon" else "VertexIDsToIslandIDs"
+        try:
+            out = self._exec("Save", {"MapValues": [name], "IndexTable": {table: True}}, SNAPSHOT_TIMEOUT_MS)
+        except OpError as e:
+            if e.kind == "rizomuv" and "MapValues" in e.message and "not recognized" in e.message:
+                raise OpError("rizomuv", "This RizomUV cannot export map values (Save MapValues): it is older "
+                                         "than the maps tool needs.") from None
+            raise
+        finally:
+            if attached:
+                self._rearm()
+        out = out or {}
+        values = out.get("MapValues.%s" % name)
+        if values is None:
+            values = (out.get("MapValues") or {}).get(name)
+        islands = out.get("IndexTable.%s" % table)
+        if islands is None:
+            islands = (out.get("IndexTable") or {}).get(table)
+        values = np.asarray(values if values is not None else [], np.float64)
+        islands = np.asarray(islands if islands is not None else [], np.int64)
+        if islands.size != values.size:
+            raise OpError("internal", "RizomUV gave %d values of %s for %d primitives." % (values.size, name, islands.size))
+        neutral = float(desc.get("DefaultValue", 0.0))
+        vmin, vmax = desc.get("MinValue"), desc.get("MaxValue")
+        painted = np.abs(values - neutral) > 1e-6
+        res = {"map": name, "per": "polygon" if prim == "Polygon" else "vertex", "neutral": neutral,
+               "range": [vmin, vmax], "scale": desc.get("ScaleType"), "primitives": int(values.size),
+               "painted": int(painted.sum()),
+               "painted_share": round(float(painted.mean()), 4) if values.size else 0.0}
+        if painted.any():
+            pv = values[painted]
+            res["painted_values"] = {"min": round(float(pv.min()), 4), "max": round(float(pv.max()), 4),
+                                     "mean": round(float(pv.mean()), 4)}
+            if vmin is not None and vmax is not None and vmax > vmin:
+                edges = np.linspace(float(vmin), float(vmax), 6)
+                counts, _ = np.histogram(values, edges)
+                res["histogram"] = [{"from": round(float(a), 3), "to": round(float(b), 3), "count": int(c)}
+                                    for a, b, c in zip(edges[:-1], edges[1:], counts)]
+            n = int(islands.max()) + 1
+            total = np.bincount(islands, minlength=n)
+            count = np.bincount(islands[painted], minlength=n)
+            mean = np.bincount(islands, weights=values, minlength=n) / np.maximum(total, 1)
+            lo = np.full(n, np.inf)
+            hi = np.full(n, -np.inf)
+            np.minimum.at(lo, islands, values)
+            np.maximum.at(hi, islands, values)
+            rows = [{"island": int(i), "painted_share": round(int(count[i]) / int(total[i]), 3),
+                     "mean": round(float(mean[i]), 4), "min": round(float(lo[i]), 4), "max": round(float(hi[i]), 4)}
+                    for i in np.nonzero(count)[0].tolist()]
+            rows.sort(key=lambda r: (-r["painted_share"], r["island"]))
+            res["islands_painted"] = {"count": len(rows), "islands": rows[:int(island_limit)]}
+        return res
+
     def _tile_grid(self):
         """The UV tile grid (columns, rows) of the root group, as the UV Set panel's Grid (UDIM)
         row sets it; (1, 1) when RizomUV does not say."""
