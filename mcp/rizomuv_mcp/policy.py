@@ -92,15 +92,26 @@ def _ui_event_log_guard(params):
     return None
 
 
-def _set_guard(params):
+def _link_state_guard(params):
+    """Never passed, full access or not: Vars.RizomUVLink.* holds the link's identity and the
+    full-access switch, which only the person at the keyboard may turn on."""
     if not isinstance(params, dict) or not isinstance(params.get("Path"), str):
         return 'Set takes {"Path": "<dotted.path>", "Value": <value>} (optionally "UndoAble": true).'
+    path = params["Path"].strip()
+    if path == "Vars.RizomUVLink" or path.startswith("Vars.RizomUVLink."):
+        return ("Vars.RizomUVLink.* is the link's own state (instance identity, full access); it is not set "
+                "from here. Full access is given by the artist, in RizomUV.")
+    return None
+
+
+def _set_guard(params):
+    reason = _link_state_guard(params)
+    if reason:
+        return reason
     path = params["Path"].strip()
     if path == "Prefs" or path.startswith("Prefs."):
         return ("Prefs.* are the application preferences: they persist beyond this session and are "
                 "not set from here.")
-    if path == "Vars.RizomUVLink" or path.startswith("Vars.RizomUVLink."):
-        return "Vars.RizomUVLink.* is the link's own state (instance identity); it is not set from here."
     return None
 
 
@@ -220,10 +231,26 @@ def rule_info(command: str) -> dict | None:
             "allowed_headless": rule.headless, "note": rule.denied or CATEGORIES[rule.category]}
 
 
-def check(command: str, params: Any, attached: bool) -> tuple[bool, str]:
+# What full access still refuses: commands that break RizomUV or end it without asking to save,
+# and the guards that keep it from crashing or from granting itself its own access.
+_ALWAYS_DENIED = ("internal", "quit")
+_FULL_ACCESS_GUARDS = {"Get": _get_guard, "GetAsString": _get_guard, "Set": _link_state_guard}
+
+
+def check(command: str, params: Any, attached: bool, full: bool = False) -> tuple[bool, str]:
     """(allowed, reason). The reason says why a command is refused and what to use instead;
-    for an allowed command it describes what the command does to the instance."""
+    for an allowed command it describes what the command does to the instance. full: the
+    access the artist gave in RizomUV, or the server's --policy full: every classified
+    command but the internal ones and Quit/Exit, and no guard but the two that matter."""
     rule = _RULES.get(command)
+    if rule is not None and full:
+        if rule.category in _ALWAYS_DENIED:
+            return False, rule.denied
+        guard = _FULL_ACCESS_GUARDS.get(command)
+        reason = guard(params) if guard else None
+        if reason:
+            return False, reason
+        return True, "full access: " + CATEGORIES[rule.category]
     if rule is None:
         hint = difflib.get_close_matches(command, list(_RULES), n=1, cutoff=0.8)
         folded = {name.lower(): name for name in _RULES}.get(str(command).lower())

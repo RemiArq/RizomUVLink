@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 INSTANCE_MODES = ("auto", "attach", "headless")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+POLICIES = ("guarded", "full")
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class Config:
     log_level: str = "INFO"
     graph: str | None = None        # the node graph auto_seams runs (None: no auto_seams tool)
     follow_view: bool = True        # frame the artist's viewports after the tools that change what they show
+    policy: str = "guarded"         # "full": run_command passes every command but the internal ones and Quit
     link_worker: bool = False       # internal: this process is the link worker
 
 
@@ -72,6 +74,11 @@ def build_parser():
                         help="leave the viewports of the artist's RizomUV alone: by default they are framed "
                              "on the result after load, unfold, optimize, pack, auto_seams, uv_sets and undo "
                              "[env RIZOMUV_MCP_FOLLOW_VIEW=0]")
+    parser.add_argument("--policy", type=str.lower, choices=POLICIES,
+                        help="guarded (default): run_command passes reads, undoable edits and undo on the artist's "
+                             "RizomUV; full: every command but RizomUV's internal ones and Quit/Exit, on any "
+                             "instance, for a demo or a headless pipeline. The artist can also give full access "
+                             "from RizomUV's Link indicator, for one session [env RIZOMUV_MCP_POLICY]")
     parser.add_argument("--log-level", type=str.upper, choices=LOG_LEVELS,
                         help="stderr logging level (default INFO) [env RIZOMUV_MCP_LOG_LEVEL]")
     parser.add_argument("--link-worker", action="store_true", help=argparse.SUPPRESS)
@@ -112,8 +119,10 @@ def parse(argv=None, env=None):
             follow_view = False
         else:
             raise ConfigError("RIZOMUV_MCP_FOLLOW_VIEW must be 1 or 0, not %r" % value)
+    pol, src = pick(args.policy, "POLICY")
+    pol = _choice(pol.lower(), POLICIES, src) if pol else "guarded"
     graph, _ = pick(args.graph, "GRAPH")
     # the client decides the server's working directory: a relative path or ~ is made absolute now
     graph = os.path.abspath(os.path.expanduser(graph)) if graph else None
     return Config(instance=instance, port=port, exe=exe, launch_timeout=timeout, log_level=level,
-                  graph=graph, follow_view=follow_view, link_worker=args.link_worker)
+                  graph=graph, follow_view=follow_view, policy=pol, link_worker=args.link_worker)

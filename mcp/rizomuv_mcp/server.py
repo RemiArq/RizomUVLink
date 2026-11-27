@@ -286,7 +286,7 @@ def _analysis_defaults(session, map_resolution, padding_px):
     return res, pad, source
 
 
-def _link_client_info(ctx):
+def _link_client_info(ctx, config=None):
     """How this server introduces itself to RizomUV (LinkClientInfo), naming the MCP client that drives
     it as its initialize says (Claude Code, Claude Desktop, Cursor...)."""
     info = {"Name": "RizomUV MCP server", "Version": __version__}
@@ -297,6 +297,8 @@ def _link_client_info(ctx):
         client = None
     if client is not None and getattr(client, "name", None):
         info["Detail"] = "for %s%s" % (client.name, " " + client.version if getattr(client, "version", None) else "")
+    if config is not None and config.policy == "full":
+        info["Detail"] = (info.get("Detail", "") + ", full access by its configuration").lstrip(", ")
     return info
 
 
@@ -326,10 +328,25 @@ def build_server(config) -> MCPServer:
     def session_of(ctx) -> Session:
         session = ctx.request_context.lifespan_context
         if session.client is None:
-            session.client = _link_client_info(ctx)
+            session.client = _link_client_info(ctx, config)
         return session
 
     # -------------------------------------------------------------- the viewports
+
+    async def _access(session, progress):
+        """What run_command may pass: "full (server option)" with --policy full; "full (given in
+        RizomUV)" when the artist turned it on from the Link indicator (read at each call, so that
+        turning it off takes effect at once); else "guarded". A RizomUV without the switch reads
+        guarded."""
+        if config.policy == "full":
+            return "full (server option)"
+        if not session.attached:
+            return "guarded"
+        try:
+            given = await session.execute("Get", "Vars.RizomUVLink.FullAccess", label="Access", progress=progress)
+        except ToolError:
+            return "guarded"
+        return "full (given in RizomUV)" if given is True else "guarded"
 
     def _on_screen(session):
         """The artist's RizomUV, the only one with viewports to look at."""
@@ -393,7 +410,14 @@ def build_server(config) -> MCPServer:
         annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False))
     @_guard
     async def session_info(ctx: Context) -> dict[str, Any]:
-        return await session_of(ctx).info()
+        session = session_of(ctx)
+        out = await session.info()
+        if session.connected:
+            try:
+                out["access"] = await _access(session, _reporter(ctx))
+            except ToolError:
+                pass
+        return out
 
     @mcp.tool(title="Connect to RizomUV", description=(
         "Choose or switch the RizomUV this session drives (other tools connect on their own; call this only "
@@ -1344,8 +1368,12 @@ def build_server(config) -> MCPServer:
         "Run another RizomUV command through RizomUVLink (command_help lists them and documents each, "
         "parameters included: read it before the first call of a command). Prefer the dedicated tools, which carry guardrails. A policy "
         "decides what passes: on the artist's RizomUV only reads, undoable scene edits and undo; on a private "
-        "headless instance also loading, saving, exporting and setting session values. Never Quit/Exit, "
-        "preferences, or Get('Lib') / Get('Lib.Mesh') (they crash RizomUV or cannot be serialized). params is "
+        "headless instance also loading, saving, exporting and setting session values. With full access "
+        "(given by the artist from RizomUV's Link indicator, or the server's --policy full; session_info says "
+        "which) every command passes, preferences and the interface included. Never Quit/Exit, RizomUV's "
+        "internal commands, Vars.RizomUVLink.*, or Get('Lib') / Get('Lib.Mesh') (they crash RizomUV or cannot "
+        "be serialized). Do not ask the artist for full access unless the task needs a command the policy "
+        "refuses. params is "
         "the command's parameter table, or a path string for Get, Count, ItemNames and Eval. Results longer "
         "than 20,000 characters of JSON are truncated."),
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False,
@@ -1357,13 +1385,18 @@ def build_server(config) -> MCPServer:
                 description="Parameter table, or a path string for Get/Count/ItemNames/Eval.")] = None,
             ctx: Context = None) -> dict[str, Any]:
         command = command.strip()
-        on_attached, on_headless = policy.check(command, params, True), policy.check(command, params, False)
-        if not on_attached[0] and not on_headless[0]:
-            raise ToolError(on_headless[1])
+        # refused whatever the access (internal, Quit, unclassified): no RizomUV is started for it
+        anywhere = policy.check(command, params, False, full=True)
+        if not anywhere[0]:
+            raise ToolError(anywhere[1])
         session, progress = session_of(ctx), _reporter(ctx)
         await session.ensure(progress)
-        allowed, reason = on_attached if session.attached else on_headless
+        access = await _access(session, progress)
+        allowed, reason = policy.check(command, params, session.attached, full=access != "guarded")
         if not allowed:
+            if session.attached and access == "guarded" and anywhere[0]:
+                reason += (" The artist can give full access for this session from the Link indicator in "
+                           "RizomUV's status bar (it ends when RizomUV quits).")
             raise ToolError(reason)
         t0 = time.perf_counter()
         value = await session.execute(command, params if params is not None else {}, label=command,

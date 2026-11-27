@@ -125,3 +125,27 @@ def test_unknown_commands_are_denied():
     assert not allowed and "not" in reason and "classified" in reason
     allowed, reason = policy.check("unfold", {}, ATTACHED)
     assert not allowed and "'Unfold'" in reason
+
+
+def test_full_access_passes_every_command_but_the_internal_ones_and_quit():
+    for name, params in (("Set", {"Path": "Prefs.UI.Theme", "Value": 1}), ("LoadUserTexture", "C:/t.png"),
+                         ("TriggerFeature", "ZOMID_PACK_UI"), ("Load", {"File": {"Path": "x"}}),
+                         ("SavePreferences", {}), ("UiLayout", {}),
+                         ("SnapshotWindowTree", {"Path": "C:/t.json"})):
+        allowed, reason = policy.check(name, params, ATTACHED, full=True)
+        assert allowed and reason.startswith("full access: "), (name, reason)
+        assert not policy.check(name, params, ATTACHED)[0], name
+    for name in ("Quit", "Exit", "InitLib", "Loop", "Test", "LibTaskUpdate"):
+        assert not policy.check(name, {}, ATTACHED, full=True)[0], name
+        assert not policy.check(name, {}, HEADLESS, full=True)[0], name
+
+
+def test_full_access_keeps_the_guards_that_matter():
+    """It never writes the link's own state, the full-access switch included, and never
+    serializes the whole Lib, which crashes RizomUV."""
+    for path in ("Vars.RizomUVLink.FullAccess", "Vars.RizomUVLink.Identifier", "Vars.RizomUVLink"):
+        allowed, reason = policy.check("Set", {"Path": path, "Value": True}, ATTACHED, full=True)
+        assert not allowed and "given by the artist" in reason
+    for path in ("Lib", "", "Lib.Mesh"):
+        assert not policy.check("Get", path, ATTACHED, full=True)[0]
+    assert not policy.check("NoSuchCommand", {}, ATTACHED, full=True)[0]

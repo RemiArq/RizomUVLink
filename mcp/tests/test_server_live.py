@@ -53,11 +53,15 @@ def test_config_command_line_wins_over_the_environment():
     assert cfg.exe is None, "RIZOMUV_EXE is resolved by launch.find_rizomuv_exe, which names its source"
     cfg = parse(["--instance", "attach", "--port", "50200", "--exe", r"C:\x\rizomuv.exe", "--link-worker"], env=env)
     assert (cfg.instance, cfg.port, cfg.exe, cfg.link_worker) == ("attach", 50200, r"C:\x\rizomuv.exe", True)
+    assert parse([], env={}).policy == "guarded"
+    assert parse(["--policy", "FULL"], env={}).policy == "full"
+    assert parse([], env={"RIZOMUV_MCP_POLICY": "full"}).policy == "full"
     assert parse([], env={"RIZOMUV_MCP_FOLLOW_VIEW": "0"}).follow_view is False
     assert parse([], env={"RIZOMUV_MCP_FOLLOW_VIEW": "1"}).follow_view is True
     assert parse(["--no-follow-view"], env={"RIZOMUV_MCP_FOLLOW_VIEW": "1"}).follow_view is False
     for bad in ({"RIZOMUV_MCP_PORT": "http"}, {"RIZOMUV_MCP_PORT": "70000"}, {"RIZOMUV_MCP_INSTANCE": "gui"},
-                {"RIZOMUV_MCP_LAUNCH_TIMEOUT": "-1"}, {"RIZOMUV_MCP_FOLLOW_VIEW": "maybe"}):
+                {"RIZOMUV_MCP_LAUNCH_TIMEOUT": "-1"}, {"RIZOMUV_MCP_FOLLOW_VIEW": "maybe"},
+                {"RIZOMUV_MCP_POLICY": "open"}):
         with pytest.raises(ConfigError, match=next(iter(bad))):
             parse([], env=bad)
 
@@ -703,4 +707,69 @@ def test_the_server_introduces_itself_to_rizomuv(snap_exe, isolated_dirs, exampl
             assert state["Connections"] >= 1 and state["Commands"] > 0
             r = await call(c, "run_command", {"command": "LinkClientInfo", "params": {"Name": "someone else"}})
             assert r.is_error and "introduces itself" in text(r)
+    anyio.run(go)
+
+
+_SET_FULL_ACCESS = """
+import sys
+sys.path.insert(0, sys.argv[2])
+from RizomUVLink import CRizomUVLink
+link = CRizomUVLink()
+link.Connect(int(sys.argv[1]))
+link.Execute("Set", {"Path": "Vars.RizomUVLink.FullAccess", "Value": sys.argv[3] == "on"})
+"""
+
+
+@pytest.mark.live
+def test_full_access_given_in_rizomuv_opens_run_command(snap_exe, isolated_dirs, pkg_dir):
+    """The artist's switch (the Link indicator; here, another client doing what its click does)
+    opens run_command on the artist's RizomUV at once, and closing it takes effect at once.
+    The server itself never sets it, and Quit stays refused."""
+    import subprocess
+    import sys
+
+    inst = launch.launch_headless(snap_exe)
+    try:
+        inst.wait_ready(180)
+
+        def switch(on):
+            r = subprocess.run([sys.executable, "-c", _SET_FULL_ACCESS, str(inst.port), str(pkg_dir),
+                                "on" if on else "off"], capture_output=True, text=True, timeout=60)
+            assert r.returncode == 0, r.stderr
+
+        async def go():
+            async with Client(build_server(Config(port=inst.port))) as c:
+                setvar = {"command": "Set", "params": {"Path": "Vars.Viewport.ViewportUV.Textured", "Value": True}}
+                r = await call(c, "run_command", setvar)
+                assert r.is_error and "Link indicator" in text(r)
+                assert data(await call(c, "session_info"))["access"] == "guarded"
+                switch(True)
+                assert data(await call(c, "session_info"))["access"] == "full (given in RizomUV)"
+                assert data(await call(c, "run_command", setvar))["policy"].startswith("full access")
+                r = await call(c, "run_command", {"command": "Set", "params": {
+                    "Path": "Vars.RizomUVLink.FullAccess", "Value": False}})
+                assert r.is_error and "given by the artist" in text(r)
+                r = await call(c, "run_command", {"command": "Quit", "params": {}})
+                assert r.is_error
+                switch(False)
+                assert (await call(c, "run_command", setvar)).is_error
+
+        anyio.run(go)
+        _quit(inst.port)
+        assert inst.proc.wait(30) == 0
+    finally:
+        inst.terminate()
+
+
+@pytest.mark.live
+def test_policy_full_opens_run_command_on_a_headless_instance(snap_exe, isolated_dirs):
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe), policy="full")),
+                          mode="legacy") as c:
+            r = data(await call(c, "run_command", {"command": "Set", "params": {
+                "Path": "Prefs.Layout.Distribute", "Value": True}}))
+            assert r["policy"].startswith("full access")
+            info = data(await call(c, "session_info"))
+            assert info["access"] == "full (server option)"
+            assert "full access" in info["introduced_as"]["Detail"]
     anyio.run(go)

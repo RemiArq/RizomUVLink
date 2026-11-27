@@ -84,6 +84,12 @@ the UV coordinates, so they cannot repeat a mistake RizomUV would make about its
 * **On your instance, `run_command` only passes reads, undoable edits and undo.** Preferences, the
   window layout, arbitrary file writes and `Quit` are refused. A private headless instance is allowed
   more, since nothing there is yours.
+* **Full access is yours to give.** For a demo, click the **Link** indicator in RizomUV's status bar and
+  choose *Allow Full Access*: `run_command` then passes every command, preferences and the interface
+  included, until you choose *Back to Safe Mode* or RizomUV quits. An amber outline round the indicator
+  says it is on. The assistant cannot turn it on itself. Even then, `Quit`, `Exit` and RizomUV's
+  internal commands stay refused, and `load` and `save` keep their own guards. For headless pipelines,
+  `--policy full` (`RIZOMUV_MCP_POLICY=full`) gives the same access from the server's configuration.
 * **Your viewports follow its work.** After `load`, `unfold`, `optimize`, `pack`, `auto_seams`, a
   change of the current UV set and `undo`, the UV view (and the 3D view after a load) slides to fit
   the result, so you see what it did. A view you have collapsed in your layout is left alone.
@@ -113,7 +119,7 @@ then point the client at `boot.py` with the Python that has the matching RizomUV
 Options (command line, or the environment variable): `--instance auto|attach|headless`
 (`RIZOMUV_MCP_INSTANCE`), `--port <n>` (`RIZOMUV_MCP_PORT`, attach to an instance started with
 `-id <n>`), `--exe <path>` (`RIZOMUV_EXE`), `--launch-timeout <s>`, `--log-level`,
-`--no-follow-view` (`RIZOMUV_MCP_FOLLOW_VIEW=0`).
+`--no-follow-view` (`RIZOMUV_MCP_FOLLOW_VIEW=0`), `--policy guarded|full` (`RIZOMUV_MCP_POLICY`).
 
 Tests: `python -m pytest mcp/tests` (the ones that drive RizomUV skip when no executable is found;
 `RIZOMUV_MCP_TEST_EXE` names one).
