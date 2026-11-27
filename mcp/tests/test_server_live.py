@@ -17,7 +17,7 @@ from rizomuv_mcp.server import build_server
 
 EXPECTED_TOOLS = {"session_info", "connect", "load", "unfold", "pack", "measure", "diagnose", "render_layout",
                   "save", "undo", "run_command", "transfer_texture", "uv_sets", "command_help", "cut", "weld",
-                  "optimize", "validate", "texel_density", "view"}
+                  "optimize", "validate", "texel_density", "view", "controls"}
 
 
 def text(result):
@@ -772,4 +772,29 @@ def test_policy_full_opens_run_command_on_a_headless_instance(snap_exe, isolated
             info = data(await call(c, "session_info"))
             assert info["access"] == "full (server option)"
             assert "full access" in info["introduced_as"]["Detail"]
+    anyio.run(go)
+
+
+@pytest.mark.live
+def test_controls_reads_the_bindings_in_effect(snap_exe, isolated_dirs):
+    """The controls tool returns the preset's bindings, the RizomUV preset's by default -- not the
+    Custom table of Controls.CustomMousePreset -- and filters by query; session_info names the preset."""
+    async def go():
+        async with Client(build_server(Config(instance="headless", exe=str(snap_exe))), mode="legacy") as c:
+            out = data(await call(c, "controls", {"hotkeys": False}))
+            assert out["preset"] == {"id": 0, "name": "RizomUV", "custom": False}
+            mouse = {m["operation"]: m for m in out["mouse"]}
+            assert mouse["ORBIT"]["bindings"] == ["Alt-LMB"]
+            assert mouse["ADD_SELECT"]["bindings"] == ["Ctrl-LMB"]
+            assert "viewport" in out and "hotkeys" not in out
+            orbit = data(await call(c, "controls", {"query": "orbit", "hotkeys": False}))
+            assert [m["operation"] for m in orbit["mouse"]] == ["ORBIT"]
+            keys = data(await call(c, "controls", {"query": "Center All", "mouse": False}))
+            assert keys["hotkeys"] and all("center all" in h["name"].lower() for h in keys["hotkeys"])
+            info = data(await call(c, "session_info"))
+            assert info["mouse"] == {"preset_id": 0, "preset_name": "RizomUV", "custom_table_active": False}
+            guide = data(await call(c, "command_help", {"name": "guide:controls"}))
+            assert "CustomMousePreset" in guide["text"]
+            got = data(await call(c, "run_command", {"command": "Get", "params": "Controls.MousePresetMode"}))
+            assert got["result"] == 0 and "controls tool" in got["note"]
     anyio.run(go)

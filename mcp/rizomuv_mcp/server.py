@@ -165,6 +165,34 @@ Pack takes ~10–25 s on 2.5k islands (1024: ~10 s, 2048: ~18–20 s, padding 0:
 3. render_layout to see why — never to rank two layouts: the eye ranks them badly.
 """
 
+GUIDE_CONTROLS = """\
+# Mouse and keyboard controls of RizomUV
+
+Read them with the controls tool (RizomUV command Bindings): it returns the bindings the viewports
+answer right now. Do not read them from the Controls data tree.
+
+## The trap
+
+* Controls.MousePresetMode is the mouse preset in use: 0 RizomUV, 2 Maya, 3 3DSMax, 5 Rhino, 6 C4D,
+  7 Blender, 8 ZBrush, 9 Modo, 10 RMB Orbit, 11 Custom. 1 (RizomUV Legacy) is turned into Custom when the
+  controls are loaded, and 4 (Softimage, removed) is read as 0.
+* A built-in preset's bindings are in RizomUV's code, not in the data tree.
+* Controls.CustomMousePreset is a full table that looks like the bindings, but it is the Custom preset's
+  only. Under any other preset it is not what the mouse does.
+
+## The RizomUV preset (0, the default)
+
+Alt+LMB drag orbits, Alt+MMB pans, Alt+RMB zooms. LMB selects, Ctrl+LMB adds to the selection,
+Ctrl+Shift+LMB removes from it, Shift+LMB selects the shortest path (edge and polygon modes). Space with
+MMB, LMB or RMB moves, scales or rotates the selection; D with the same buttons moves the island under the
+pointer. Check with the controls tool: the artist can change all of it.
+
+## Keyboard hotkeys
+
+controls(query="...") filters the features that have a hotkey by name, unique name or key, e.g.
+query="view" or query="Ctrl-". The unique names are the ones TriggerFeature takes.
+"""
+
 # AuxGroup: the islands outside every tile, in the root group, are packed with the tiles' -- after the
 # IslandGroups distribution the pack tool runs first, as the Pack button does (see pack); without the
 # distribution the tool drops it, as the button does.
@@ -417,6 +445,11 @@ def build_server(config) -> MCPServer:
                 out["access"] = await _access(session, _reporter(ctx))
             except ToolError:
                 pass
+            if out.get("instance_alive") and not (session.inflight or session._lock.locked()):
+                try:
+                    out["mouse"] = await _mouse_preset(session, _reporter(ctx))
+                except ToolError:
+                    pass
         return out
 
     @mcp.tool(title="Connect to RizomUV", description=(
@@ -439,6 +472,74 @@ def build_server(config) -> MCPServer:
         session = session_of(ctx)
         await session.switch(target, port, _reporter(ctx))
         return await session.info()
+
+    async def _bindings(session, progress, params):
+        """The Bindings command's answer; None when this RizomUV predates it."""
+        try:
+            return await session.execute("Bindings", params, label="Reading the controls", progress=progress)
+        except ToolError as e:
+            if "Bindings" in str(e) and ("not found" in str(e).lower() or "unknown command" in str(e).lower()):
+                return None
+            raise
+
+    async def _mouse_preset(session, progress):
+        """{preset_id, preset_name, custom_table_active}: the mouse preset in use."""
+        found = await _bindings(session, progress, {"Mouse": False, "Hotkeys": False})
+        if found is not None:
+            p = found.get("Preset") or {}
+            return {"preset_id": p.get("Id"), "preset_name": p.get("Name"),
+                    "custom_table_active": bool(p.get("Custom"))}
+        mode = await session.execute("Get", "Controls.MousePresetMode", label="Reading the controls",
+                                     progress=progress)
+        return {"preset_id": mode, "preset_name": None, "custom_table_active": mode == 11,
+                "note": "This RizomUV has no Bindings command: the preset's name and bindings are not readable."}
+
+    @mcp.tool(title="Mouse and keyboard controls", description=(
+        "The mouse and keyboard bindings in effect in RizomUV, as the viewports and hotkeys answer them: the "
+        "mouse preset in use, each mouse interaction (orbit, pan, zoom, select, add or remove from the "
+        "selection, the Space and D transforms, the brushes...) with its combinations and the tool and "
+        "element modes it acts in, the viewport settings (wheel, orbit mode), and the features that have a "
+        "keyboard hotkey. Read only. query keeps the entries whose name or keys hold it, the case aside "
+        "(e.g. 'orbit', 'select', 'view', 'Ctrl-'). Use this rather than the Controls data tree: "
+        "Controls.CustomMousePreset is the Custom preset's table only. command_help('guide:controls') "
+        "explains the presets."),
+        annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True,
+                                    open_world_hint=False))
+    @_guard
+    async def controls(
+            query: Annotated[str | None, Field(description="Keep only the entries whose name or keys hold this.")] = None,
+            mouse: Annotated[bool, Field(description="Include the mouse bindings and viewport settings.")] = True,
+            hotkeys: Annotated[bool, Field(description="Include the keyboard hotkeys.")] = True,
+            ctx: Context = None) -> dict[str, Any]:
+        session, progress = session_of(ctx), _reporter(ctx)
+        await session.ensure(progress)
+        params = {"Mouse": mouse, "Hotkeys": hotkeys}
+        if query:
+            params["Query"] = query
+        found = await _bindings(session, progress, params)
+        if found is None:
+            preset = await _mouse_preset(session, progress)
+            return {"preset": preset, "available": False,
+                    "note": ("This RizomUV has no Bindings command (it came with RizomUV 2027.0 builds of "
+                             "2026-11-27): the bindings in effect cannot be read. Do not read them from "
+                             "Controls.CustomMousePreset unless preset_id is 11 (Custom); "
+                             "command_help('guide:controls') gives the RizomUV preset's defaults.")}
+        p = found.get("Preset") or {}
+        out = {"preset": {"id": p.get("Id"), "name": p.get("Name"), "custom": bool(p.get("Custom"))}}
+        if mouse:
+            out["mouse"] = [{"operation": op, "name": e.get("Name"), "bindings": e.get("Bindings") or [],
+                             "tool_mode": e.get("ToolMode"), "element_modes": e.get("ElementModes") or [],
+                             "uv_view_only": bool(e.get("UVViewOnly"))}
+                            for op, e in (found.get("Mouse") or {}).items()]
+            if found.get("Viewport") is not None:
+                out["viewport"] = found["Viewport"]
+        if hotkeys:
+            h = found.get("Hotkeys") or {}
+            out["hotkeys"] = [{"feature": f, "name": n, "hotkey": k}
+                              for f, n, k in zip(h.get("Features") or [], h.get("Names") or [], h.get("Keys") or [])]
+        if query:
+            out["query"] = query
+        return out
 
     # -------------------------------------------------------------- scene
 
@@ -1404,10 +1505,14 @@ def build_server(config) -> MCPServer:
         if command == "Load":
             session.last_pack = None
         out = {"command": command, "seconds": round(time.perf_counter() - t0, 2), "policy": reason}
+        hint = policy.get_note(command, params)
+        if hint:
+            out["note"] = hint
         text = json.dumps(value, allow_nan=True, default=repr)
         if len(text) > RESULT_LIMIT:
             out["result_truncated"] = text[:RESULT_LIMIT]
-            out["note"] = ("The result is %d characters of JSON; only the first %d are shown. Read a narrower "
+            out["note"] = ((out["note"] + " " if out.get("note") else "")
+                           + "The result is %d characters of JSON; only the first %d are shown. Read a narrower "
                            "path (ItemNames lists a container's children)." % (len(text), RESULT_LIMIT))
         else:
             out["result"] = value
@@ -1464,16 +1569,20 @@ def build_server(config) -> MCPServer:
         "The documentation of RizomUV's own commands, for run_command. Without name: every command with a "
         "one-line summary and whether run_command passes it on the artist's RizomUV and on a private headless "
         "one. With name: that command's full documentation, its parameters and their defaults. "
-        "name='guide:packing' gives the measured packing guide. Never starts RizomUV; once connected the "
+        "name='guide:packing' gives the measured packing guide, 'guide:controls' the mouse presets and how to "
+        "read the bindings. Never starts RizomUV; once connected the "
         "documentation is the running version's."),
         annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False))
     @_guard
     async def command_help(
             name: Annotated[str | None, Field(
-                description="A command name (e.g. Cut, Select, IslandGroups), or 'guide:packing'.")] = None,
+                description="A command name (e.g. Cut, Select, IslandGroups), or 'guide:packing' or "
+                            "'guide:controls'.")] = None,
             ctx: Context = None) -> dict[str, Any]:
         if name and name.strip().lower() in ("guide:packing", "guide/packing", "packing guide"):
             return {"guide": "packing", "text": GUIDE_PACKING}
+        if name and name.strip().lower() in ("guide:controls", "guide/controls", "controls guide"):
+            return {"guide": "controls", "text": GUIDE_CONTROLS}
         table, source = await docs_table()
         if not name or not name.strip():
             commands = []
@@ -1483,7 +1592,7 @@ def build_server(config) -> MCPServer:
                     continue
                 commands.append({"name": cmd, "summary": docs.summary_line(table[cmd], 120),
                                  "artist_instance": rule["allowed_attached"], "headless": rule["allowed_headless"]})
-            return {"commands": commands, "guides": ["guide:packing"], "source": source,
+            return {"commands": commands, "guides": ["guide:packing", "guide:controls"], "source": source,
                     "note": ("Only the commands run_command passes are listed. Prefer the dedicated tools (load, "
                              "unfold, pack, save, uv_sets, transfer_texture...) where one exists.")}
         cmd = name.strip()
@@ -1534,5 +1643,11 @@ def build_server(config) -> MCPServer:
                   description="What moves UV coverage in RizomUV's Pack, measured: resolution, padding, rotation.")
     def packing_guide() -> str:
         return GUIDE_PACKING
+
+    @mcp.resource("rizomuv://guide/controls", name="controls_guide", title="Controls guide",
+                  mime_type="text/markdown",
+                  description="RizomUV's mouse presets, and why the Controls data tree misleads about them.")
+    def controls_guide() -> str:
+        return GUIDE_CONTROLS
 
     return mcp

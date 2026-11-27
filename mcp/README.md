@@ -44,7 +44,7 @@ the entry's `env`. `rizomuv-mcp --launcher-info` prints what it resolved (on std
 
 | Tool | What it does |
 |---|---|
-| `session_info` | Which RizomUV this session drives, its scene, and the instances found on the machine. Starts nothing. |
+| `session_info` | Which RizomUV this session drives, its scene, its mouse preset, and the instances found on the machine. Starts nothing. |
 | `connect` | Choose or switch: the open RizomUV, a private headless one, or one port in particular. |
 | `load` | Load a mesh file with its UVs. Replaces the scene — refused on your own RizomUV unless you agreed. |
 | `unfold` | Flatten the islands of the working set. |
@@ -63,12 +63,13 @@ the entry's `env`. `rizomuv-mcp --launcher-info` prints what it resolved (on std
 | `uv_sets` | List the UV sets (the current one, the texture of each), and duplicate, create, rename, delete or make one current. |
 | `transfer_texture` | Bake a texture from one UV set onto another, after a new unwrap: the image is resampled onto the new layout. With `show`, the result becomes the texture of the new set, which is made current, and the viewports show it. |
 | `auto_seams` | Cut, unfold and pack the whole mesh with RizomUV's node graph, in one undo step. Offered only when the server is given a graph file (`--graph` or `RIZOMUV_MCP_GRAPH`); it needs a RizomUV whose node graph is on (`Prefs.Experimental.Graph`). The file is read at each call, so the graph can be changed without restarting. |
+| `controls` | The mouse and keyboard bindings in effect: the mouse preset, each mouse interaction (orbit, pan, zoom, selection, transforms, brushes) with its combinations, the viewport settings, and the hotkeys. `query` filters ("orbit", "view", "Ctrl-"). Read only. Needs a RizomUV with the Bindings command; older ones give the preset number only. |
 | `command_help` | The list of the commands `run_command` passes, and the full documentation of one. Starts nothing. |
 | `run_command` | Any other RizomUV command, behind a policy (see below). |
 
 The same documentation is also published as resources, for the clients that read them on their own
 (Claude Desktop does not): `rizomuv://commands`, `rizomuv://command/<name>` and
-`rizomuv://guide/packing` (what actually moves coverage, measured; `command_help('guide:packing')`).
+`rizomuv://guide/packing` (what actually moves coverage, measured; `command_help('guide:packing')`) and `rizomuv://guide/controls` (the mouse presets, and why the Controls data tree misleads; `command_help('guide:controls')`).
 
 Measurements are **independent of RizomUV**: coverage and overlap are recomputed in the server from
 the UV coordinates, so they cannot repeat a mistake RizomUV would make about its own work.

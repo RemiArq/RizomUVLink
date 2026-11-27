@@ -74,6 +74,26 @@ def _get_guard(params):
     return None
 
 
+# A Get that reads part of the Controls tree gets this note with its result: the mouse table
+# there is not what the mouse does unless the Custom preset is chosen.
+CONTROLS_NOTE = ("Controls.CustomMousePreset is the Custom preset's table only: the viewports use it when "
+                 "Controls.MousePresetMode is 11 (Custom), and the built-in preset's own bindings otherwise. "
+                 "The controls tool (RizomUV command Bindings) gives the bindings in effect.")
+
+
+def get_note(command, params):
+    """A note to return with a passed command's result, or None."""
+    if command not in ("Get", "GetAsString"):
+        return None
+    path = _path_of(params)
+    if path is None:
+        return None
+    path = path.strip().rstrip(".")
+    if path == "Controls" or path.startswith("Controls.CustomMousePreset") or path == "Controls.MousePresetMode":
+        return CONTROLS_NOTE
+    return None
+
+
 def _snapshot_guard(params):
     if isinstance(params, str) and params.strip():
         return _WRITES_FILE + "."
@@ -135,6 +155,7 @@ def _add(names, category, attached, headless, denied="", guard=None):
 
 _add("Get GetAsString", "read", True, True, guard=_get_guard)
 _add("GetVersion Count ItemNames Eval", "read", True, True)
+_add("Bindings", "read", True, True)
 _add("SnapshotWindowTree SnapshotFeatureTree", "read", True, True, guard=_snapshot_guard)
 _add("UiEventLog", "read", True, True, guard=_ui_event_log_guard)
 

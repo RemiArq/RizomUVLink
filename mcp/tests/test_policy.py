@@ -18,7 +18,7 @@ def shipped_commands():
 
 
 def test_every_shipped_command_is_classified(shipped_commands):
-    assert len(shipped_commands) == 70
+    assert len(shipped_commands) == 71
     missing = [c for c in shipped_commands if policy.rule_info(c) is None]
     assert not missing, f"commands without a policy: {missing}"
     stale = sorted(set(policy.classified()) - set(shipped_commands))
@@ -149,3 +149,17 @@ def test_full_access_keeps_the_guards_that_matter():
     for path in ("Lib", "", "Lib.Mesh"):
         assert not policy.check("Get", path, ATTACHED, full=True)[0]
     assert not policy.check("NoSuchCommand", {}, ATTACHED, full=True)[0]
+
+
+def test_bindings_is_a_read_everywhere():
+    assert policy.check("Bindings", {"Query": "orbit"}, ATTACHED)[0]
+    assert policy.check("Bindings", {}, HEADLESS)[0]
+
+
+def test_reading_the_custom_mouse_table_comes_with_a_note():
+    note = policy.get_note("Get", {"Path": "Controls.CustomMousePreset"})
+    assert note and "controls tool" in note
+    assert policy.get_note("Get", "Controls.CustomMousePreset.ORBIT") == note
+    assert policy.get_note("Get", "Controls.MousePresetMode") == note
+    assert policy.get_note("Get", "Controls.Viewport") is None
+    assert policy.get_note("ItemNames", "Controls") is None
